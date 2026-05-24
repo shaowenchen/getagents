@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Comma-separated platforms, e.g. linux/amd64,linux/arm64"
+        required: false
+        default: "linux/amd64,linux/arm64"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to ACR
+        uses: docker/login-action@v3
+        with:
+          registry: registry.cn-beijing.aliyuncs.com
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image tags
+        id: image
+        env:
+          ACR_REPOSITORY: ${{ vars.ACR_REPOSITORY }}
+        run: |
+          acr_repository="${ACR_REPOSITORY:-opshub/shaowenchen-getagents}"
+          echo "dockerhub=docker.io/shaowenchen/getagents:latest" >> "$GITHUB_OUTPUT"
+          echo "acr=registry.cn-beijing.aliyuncs.com/${acr_repository}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: ${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64' }}
+          tags: |
+            ${{ steps.image.outputs.dockerhub }}
+            ${{ steps.image.outputs.acr }}

@@ -1,0 +1,32 @@
+{
+  "name": "getagents",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "vendor": "mkdir -p src/public/vendor",
+    "dev": "npm run vendor && tsx watch src/index.ts",
+    "build": "npm run vendor && tsc && rm -rf dist/public && cp -R src/public dist/public",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^12.10.0",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.0",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.22.3",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.12",
+    "@types/uuid": "^9.0.8",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

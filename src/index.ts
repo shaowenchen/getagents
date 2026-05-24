@@ -1,0 +1,101 @@
+import 'dotenv/config';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { readFileSync } from 'fs';
+import agentsRouter from './routes/agents.js';
+import marketplaceRouter from './routes/marketplace.js';
+import shareRouter from './routes/share.js';
+import adminRouter from './routes/admin.js';
+import { createLogger } from './utils/logger.js';
+
+const log = createLogger('server');
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+const URI_PREFIX = normalizeRoutePrefix(process.env.URI_PREFIX || '/getagents');
+const publicDir = join(__dirname, 'public');
+const indexHtmlPath = join(publicDir, 'index.html');
+const indexHtmlCached = readFileSync(indexHtmlPath, 'utf8');
+const HOT_RELOAD_HTML = process.env.NODE_ENV !== 'production';
+
+function loadIndexHtml(): string {
+  const raw = HOT_RELOAD_HTML ? readFileSync(indexHtmlPath, 'utf8') : indexHtmlCached;
+  return raw.replaceAll('__ROUTE_PREFIX__', URI_PREFIX);
+}
+
+function normalizeRoutePrefix(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '/') return '';
+  return `/${trimmed.replace(/^\/+|\/+$/g, '')}`;
+}
+
+app.use(express.json());
+
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
+const appConfigScript = `window.__GETAGENTS_CONFIG__ = ${JSON.stringify({
+  routePrefix: URI_PREFIX,
+  apiPrefix: `${URI_PREFIX}/api`,
+})};`;
+
+function mountApp(prefix: string) {
+  const base = prefix || '';
+
+  app.use(`${base}/api/admin`, adminRouter);
+  app.use(`${base}/api/agents`, agentsRouter);
+  app.use(`${base}/api/marketplace`, marketplaceRouter);
+  app.use(`${base}/share`, shareRouter);
+
+  app.get(`${base}/app-config.js`, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('application/javascript').send(appConfigScript);
+  });
+
+  app.use(base || '/', express.static(publicDir, {
+    index: false,
+    setHeaders: (res) => {
+      res.setHeader('Cache-Control', 'no-store');
+    },
+  }));
+
+  const fallback = base ? [base, `${base}/*`] : ['*'];
+  app.get(fallback, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html').send(loadIndexHtml());
+  });
+}
+
+if (URI_PREFIX) {
+  app.get('/', (_req, res) => res.redirect(`${URI_PREFIX}/`));
+  mountApp(URI_PREFIX);
+} else {
+  mountApp('');
+}
+
+app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const message = err instanceof Error ? err.message : 'Internal server error';
+  log.error('Unhandled request error', {
+    method: req.method,
+    path: req.originalUrl,
+    error: message,
+    stack: err instanceof Error ? err.stack : undefined,
+  });
+  if (res.headersSent) return;
+  res.status(500).json({ error: message });
+});
+
+app.listen(Number(PORT), HOST, () => {
+  log.info('GetAgents started', {
+    host: HOST,
+    port: Number(PORT),
+    uriPrefix: URI_PREFIX || '/',
+    logLevel: (process.env.LOG_LEVEL || 'info').toLowerCase(),
+    sqlDsn: Boolean(process.env.SQL_DSN),
+    maxUploadSize: process.env.MAX_UPLOAD_SIZE || '104857600',
+  });
+});

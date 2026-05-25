@@ -275,16 +275,23 @@ function buildCliBaseUrl() {
   return publicUrl();
 }
 
-function buildCliCommand({ agentId, agentName } = {}) {
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function buildCliCommand({ agentId, agentName, description, tags } = {}) {
   const base = buildCliBaseUrl();
   const apiKey = getAdminApiKey();
   const keyPart = apiKey ? `GETAGENTS_API_KEY=${apiKey} ` : 'GETAGENTS_API_KEY=<your-api-key> ';
-  const target = agentId
-    ? ` --agent-id ${agentId}`
-    : agentName
-      ? ` --name "${agentName.replace(/"/g, '\\"')}"`
-      : ' --name "<agent-name>"';
-  return `${keyPart}bash <(curl -fsSL ${base}/cli/upload.sh)${target}`;
+  const args = [];
+  if (agentId) args.push('--agent-id', shellQuote(agentId));
+  else if (agentName) args.push('--name', shellQuote(agentName));
+  else args.push('--name', shellQuote('<agent-name>'));
+
+  if (description) args.push('--description', shellQuote(description));
+  if (tags?.length) args.push('--tags', shellQuote(tags.join(',')));
+
+  return `${keyPart}bash <(curl -fsSL ${base}/cli/upload.sh) ${args.join(' ')}`;
 }
 
 window.copyCliCommand = async (id) => {
@@ -363,43 +370,66 @@ window.toggleAgentTag = (tagName) => {
   state.agentForm.tags = current.includes(tagName)
     ? current.filter(t => t !== tagName)
     : [...current, tagName];
+  updateAgentFormCliCommand();
 };
 
 function buildAgentFormCliCommand() {
   if (state.editingAgent) return buildCliCommand({ agentId: state.editingAgent });
   const name = String(state.agentForm.name || '').trim();
-  return buildCliCommand({ agentName: name || undefined });
+  const description = String(state.agentForm.description || '').trim();
+  const tags = Array.isArray(state.agentForm.tags) ? state.agentForm.tags : [];
+  return buildCliCommand({ agentName: name, description, tags });
+}
+
+function hasRequiredAgentFormInfo() {
+  if (state.editingAgent) return true;
+  return Boolean(String(state.agentForm.name || '').trim() && String(state.agentForm.description || '').trim());
 }
 
 function renderAgentFormCliCommand() {
+  return `
+    <div id="agent-form-cli-panel" class="cli-panel" style="padding:0.75rem;border:1px solid #c7d2fe;border-radius:12px;background:#f8fbff">
+      ${renderAgentFormCliCommandContent()}
+    </div>
+  `;
+}
+
+function renderAgentFormCliCommandContent() {
   const apiKey = getAdminApiKey();
   const base = buildCliBaseUrl();
   const isEditing = Boolean(state.editingAgent);
-  return `
-    <div class="cli-panel" style="padding:0.75rem;border:1px solid #c7d2fe;border-radius:12px;background:#f8fbff">
-      <div class="cli-step-label">${isEditing ? 'Update from CLI' : 'Upload from CLI'}</div>
-      <p class="text-muted" style="margin:0 0 0.5rem;font-size:0.82rem">
-        ${isEditing
-          ? 'Run this in the agent working directory to upload a new version.'
-          : 'Run this in the agent working directory to create or update by name.'}
+  if (!hasRequiredAgentFormInfo()) {
+    return `
+      <div class="cli-step-label">Upload from CLI</div>
+      <p class="text-muted" style="margin:0;font-size:0.82rem">
+        Fill in Name and Description first, then the upload command will be generated here.
       </p>
-      ${apiKey ? '' : `
-        <div style="margin-bottom:0.5rem;padding:0.5rem 0.6rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;color:#9a3412;font-size:0.8rem">
-          Replace <code>&lt;your-api-key&gt;</code> with your API key, or sign in again to inject it automatically.
-        </div>
-      `}
-      <pre class="cli-code cli-mini"><code id="agent-form-cli-cmd">${escapeHtml(buildAgentFormCliCommand())}</code></pre>
-      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
-        <button type="button" class="btn-ghost" onclick="copyCliCommand('agent-form-cli-cmd')">Copy command</button>
-        <a class="btn-ghost" style="text-decoration:none;display:inline-block" href="${base}/cli/upload.sh" target="_blank" rel="noopener">View script</a>
+    `;
+  }
+
+  return `
+    <div class="cli-step-label">${isEditing ? 'Update from CLI' : 'Upload from CLI'}</div>
+    <p class="text-muted" style="margin:0 0 0.5rem;font-size:0.82rem">
+      ${isEditing
+        ? 'Run this in the agent working directory to upload a new version.'
+        : 'Run this in the agent working directory to create or update by name.'}
+    </p>
+    ${apiKey ? '' : `
+      <div style="margin-bottom:0.5rem;padding:0.5rem 0.6rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;color:#9a3412;font-size:0.8rem">
+        Replace <code>&lt;your-api-key&gt;</code> with your API key, or sign in again to inject it automatically.
       </div>
+    `}
+    <pre class="cli-code cli-mini"><code id="agent-form-cli-cmd">${escapeHtml(buildAgentFormCliCommand())}</code></pre>
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+      <button type="button" class="btn-ghost" onclick="copyCliCommand('agent-form-cli-cmd')">Copy command</button>
+      <a class="btn-ghost" style="text-decoration:none;display:inline-block" href="${base}/cli/upload.sh" target="_blank" rel="noopener">View script</a>
     </div>
   `;
 }
 
 window.updateAgentFormCliCommand = () => {
-  const el = document.getElementById('agent-form-cli-cmd');
-  if (el) el.innerText = buildAgentFormCliCommand();
+  const panel = document.getElementById('agent-form-cli-panel');
+  if (panel) panel.innerHTML = renderAgentFormCliCommandContent();
 };
 
 function renderAgentForm() {
@@ -416,7 +446,7 @@ function renderAgentForm() {
         </label>
         <label class="field">
           <span class="field-label">Description<span class="field-required">*</span></span>
-          <input data-agent-field="description" placeholder="What this agent does" value="${escapeHtml(f.description)}" oninput="agentForm.description=this.value">
+          <input data-agent-field="description" placeholder="What this agent does" value="${escapeHtml(f.description)}" oninput="agentForm.description=this.value; updateAgentFormCliCommand()">
         </label>
         ${!state.editingAgent ? `
         <label class="field">

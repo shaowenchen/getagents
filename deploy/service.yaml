@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: getagents
+  namespace: ops-system
+  labels:
+    app: getagents
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "80"
+spec:
+  type: ClusterIP
+  selector:
+    app: getagents
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

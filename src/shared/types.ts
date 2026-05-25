@@ -11,7 +11,6 @@ export interface AgentConfig {
   fileHash: string;
   enabled: boolean;
   tags?: string[];
-  category?: string;
   isPublic: boolean;
   downloadCount: number;
   likesCount: number;
@@ -37,7 +36,6 @@ export interface AgentSnapshot {
   fileSize: number;
   fileHash: string;
   tags?: string[];
-  category?: string;
   avatar?: string;
 }
 
@@ -45,7 +43,6 @@ export interface CreateAgentRequest {
   name: string;
   description: string;
   tags?: string[];
-  category?: string;
   avatar?: string;
 }
 
@@ -58,5 +55,12 @@ export interface ShareConfig {
 export interface User {
   id: string;
   username: string;
+  createdAt: number;
+}
+
+export interface ManagedTag {
+  id: string;
+  userId: string;
+  name: string;
   createdAt: number;
 }

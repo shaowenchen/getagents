@@ -1,11 +1,14 @@
 const ADMIN_TOKEN_KEY = 'getagents_admin_token';
+const ADMIN_API_KEY_KEY = 'getagents_admin_api_key';
 
 const appConfig = window.__GETAGENTS_CONFIG__ || {};
 
 const state = {
   // Admin
+  adminTab: 'agents',
   editingAgent: null,
   showAgentForm: false,
+  tagOptions: [],
   agentForm: createAgentForm(),
   agentFormFile: null,
 
@@ -16,7 +19,6 @@ const state = {
 
   // Marketplace
   marketplaceSearch: '',
-  marketplaceCategory: '',
   marketplaceTag: '',
   marketplaceSort: 'popular',
 
@@ -29,8 +31,7 @@ function createAgentForm() {
     name: '',
     description: '',
     enabled: true,
-    tags: '',
-    category: '',
+    tags: [],
     isPublic: false,
   };
 }
@@ -42,6 +43,7 @@ function resetAgentForm() {
 
 export {
   ADMIN_TOKEN_KEY,
+  ADMIN_API_KEY_KEY,
   appConfig,
   state,
   createAgentForm,

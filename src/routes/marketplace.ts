@@ -8,7 +8,7 @@ import type { AgentConfig } from '../shared/types.js';
 const router = Router();
 
 router.get('/', asyncHandler(async (req, res) => {
-  const { search, category, tag, sort } = req.query;
+  const { search, tag, sort } = req.query;
   let agents = await db.getPublicAgents();
 
   if (typeof search === 'string' && search.trim()) {
@@ -17,10 +17,6 @@ router.get('/', asyncHandler(async (req, res) => {
       a.name.toLowerCase().includes(q) ||
       (a.description && a.description.toLowerCase().includes(q))
     );
-  }
-
-  if (typeof category === 'string' && category.trim()) {
-    agents = agents.filter(a => a.category === category.trim());
   }
 
   if (typeof tag === 'string' && tag.trim()) {
@@ -36,11 +32,10 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(agents);
 }));
 
-router.get('/categories', asyncHandler(async (_req, res) => {
+router.get('/tags', asyncHandler(async (_req, res) => {
   const agents = await db.getPublicAgents();
-  const categories = [...new Set(agents.map(a => a.category).filter(Boolean))].sort();
   const tags = [...new Set(agents.flatMap(a => a.tags || []).filter(Boolean))].sort();
-  res.json({ categories, tags });
+  res.json({ tags });
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {
@@ -69,7 +64,6 @@ router.post('/:id/install', requireAuth, asyncHandler(async (req, res) => {
     fileSize: source.fileSize,
     fileHash: source.fileHash,
     tags: source.tags,
-    category: source.category,
     enabled: true,
     isPublic: false,
   });

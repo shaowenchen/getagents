@@ -3,7 +3,7 @@ import { dirname } from 'path';
 import { homedir } from 'os';
 import { mkdirSync } from 'fs';
 import { v4 as uuid } from 'uuid';
-import type { AgentConfig, AgentVersion, AgentSnapshot, User } from '../shared/types.js';
+import type { AgentConfig, AgentVersion, AgentSnapshot, ManagedTag, User } from '../shared/types.js';
 import { deleteAgentFiles } from '../utils/fileStore.js';
 
 const databasePath = `${homedir()}/.getagents/getagents.sqlite`;
@@ -18,6 +18,7 @@ db.pragma('journal_mode = WAL');
 db.exec(`DROP TABLE IF EXISTS agent_imports`);
 db.exec(`DROP TABLE IF EXISTS agent_versions`);
 db.exec(`DROP TABLE IF EXISTS agents`);
+db.exec(`DROP TABLE IF EXISTS managed_tags`);
 db.exec(`DROP TABLE IF EXISTS users`);
 
 db.exec(`
@@ -27,6 +28,15 @@ db.exec(`
     password_hash TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE managed_tags (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(user_id, name),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
   CREATE TABLE agents (
@@ -41,7 +51,6 @@ db.exec(`
     enabled INTEGER NOT NULL,
     is_public INTEGER NOT NULL DEFAULT 0,
     tags_json TEXT,
-    category TEXT,
     download_count INTEGER NOT NULL DEFAULT 0,
     likes_count INTEGER NOT NULL DEFAULT 0,
     share_token TEXT,
@@ -85,7 +94,6 @@ function rowToAgent(row: Record<string, unknown>): AgentConfig {
     fileHash: row.file_hash as string,
     enabled: Boolean(row.enabled),
     tags: tryParseJson(row.tags_json as string),
-    category: (row.category as string) || undefined,
     isPublic: Boolean(row.is_public),
     downloadCount: Number(row.download_count || 0),
     likesCount: Number(row.likes_count || 0),
@@ -106,7 +114,6 @@ function agentToRow(agent: Partial<AgentConfig>): Record<string, unknown> {
   if (agent.fileHash !== undefined) row.file_hash = agent.fileHash;
   if (agent.enabled !== undefined) row.enabled = agent.enabled ? 1 : 0;
   if (agent.tags !== undefined) row.tags_json = JSON.stringify(agent.tags);
-  if (agent.category !== undefined) row.category = agent.category;
   if (agent.isPublic !== undefined) row.is_public = agent.isPublic ? 1 : 0;
   if (agent.downloadCount !== undefined) row.download_count = agent.downloadCount;
   if (agent.likesCount !== undefined) row.likes_count = agent.likesCount;
@@ -127,6 +134,15 @@ function rowToUser(row: Record<string, unknown>): User {
   return {
     id: row.id as string,
     username: row.username as string,
+    createdAt: Number(row.created_at),
+  };
+}
+
+function rowToManagedTag(row: Record<string, unknown>): ManagedTag {
+  return {
+    id: row.id as string,
+    userId: row.user_id as string,
+    name: row.name as string,
     createdAt: Number(row.created_at),
   };
 }
@@ -162,6 +178,49 @@ export async function getAllUsers(): Promise<(User & { passwordHash: string })[]
   });
 }
 
+// ---- Managed Tags ----
+
+function normalizeManagedTag(name: string): string {
+  return name.trim();
+}
+
+export async function getManagedTags(userId: string): Promise<ManagedTag[]> {
+  return db.prepare('SELECT * FROM managed_tags WHERE user_id = ? ORDER BY name COLLATE NOCASE')
+    .all(userId)
+    .map((row: unknown) => rowToManagedTag(row as Record<string, unknown>));
+}
+
+export async function createManagedTag(userId: string, name: string): Promise<ManagedTag> {
+  const normalized = normalizeManagedTag(name);
+  if (!normalized) throw new Error('Tag name is required');
+  const existing = db.prepare('SELECT * FROM managed_tags WHERE user_id = ? AND name = ?')
+    .get(userId, normalized) as Record<string, unknown> | undefined;
+  if (existing) return rowToManagedTag(existing);
+
+  const id = uuid();
+  const now = Date.now();
+  db.prepare('INSERT INTO managed_tags (id,user_id,name,created_at) VALUES (?,?,?,?)')
+    .run(id, userId, normalized, now);
+  return { id, userId, name: normalized, createdAt: now };
+}
+
+export async function deleteManagedTag(userId: string, tagId: string): Promise<boolean> {
+  const row = db.prepare('SELECT * FROM managed_tags WHERE id = ? AND user_id = ?')
+    .get(tagId, userId) as Record<string, unknown> | undefined;
+  if (!row) return false;
+  const tagName = row.name as string;
+
+  const result = db.prepare('DELETE FROM managed_tags WHERE id = ? AND user_id = ?').run(tagId, userId);
+  const agents = await getAllAgents(userId);
+  for (const agent of agents) {
+    const tags = (agent.tags || []).filter(t => t !== tagName);
+    if (tags.length !== (agent.tags || []).length) {
+      await updateAgent(agent.id, { tags });
+    }
+  }
+  return result.changes > 0;
+}
+
 // ---- Agents ----
 
 export async function getAllAgents(userId?: string): Promise<AgentConfig[]> {
@@ -189,15 +248,14 @@ export async function createAgent(userId: string, data: Partial<AgentConfig> & {
     fileHash: data.fileHash,
     enabled: data.enabled !== false,
     tags: data.tags,
-    category: data.category,
     isPublic: data.isPublic || false,
     downloadCount: 0,
     likesCount: 0,
     createdAt: now,
     updatedAt: now,
   };
-  const insert = db.prepare(`INSERT INTO agents (id,user_id,name,avatar,description,filename,file_size,file_hash,enabled,is_public,tags_json,category,download_count,likes_count,share_token,share_password,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  insert.run(agent.id, agent.userId, agent.name, null, agent.description, agent.filename, agent.fileSize, agent.fileHash, agent.enabled ? 1 : 0, agent.isPublic ? 1 : 0, JSON.stringify(agent.tags || []), agent.category || null, agent.downloadCount, agent.likesCount, null, null, agent.createdAt, agent.updatedAt);
+  const insert = db.prepare(`INSERT INTO agents (id,user_id,name,avatar,description,filename,file_size,file_hash,enabled,is_public,tags_json,download_count,likes_count,share_token,share_password,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  insert.run(agent.id, agent.userId, agent.name, null, agent.description, agent.filename, agent.fileSize, agent.fileHash, agent.enabled ? 1 : 0, agent.isPublic ? 1 : 0, JSON.stringify(agent.tags || []), agent.downloadCount, agent.likesCount, null, null, agent.createdAt, agent.updatedAt);
   return agent;
 }
 
@@ -214,7 +272,7 @@ export async function updateAgent(id: string, data: Partial<AgentConfig>): Promi
   }
 
   // Auto-create version snapshot on meaningful changes
-  if (data.name !== undefined || data.description !== undefined || data.filename !== undefined) {
+  if (data.name !== undefined || data.description !== undefined || data.filename !== undefined || data.tags !== undefined) {
     await createVersion(id, 'Update');
   }
 
@@ -250,7 +308,6 @@ function agentSnapshotFields(agent: AgentConfig): Record<string, unknown> {
     fileSize: agent.fileSize,
     fileHash: agent.fileHash,
     tags: agent.tags,
-    category: agent.category,
     avatar: agent.avatar,
   };
 }

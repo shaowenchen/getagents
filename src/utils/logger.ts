@@ -1,6 +1,6 @@
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-const enabledLevel = (process.env.LOG_LEVEL || 'info').toLowerCase() as LogLevel;
+const enabledLevel = (process.env.LOG_LEVEL || 'debug').toLowerCase() as LogLevel;
 const levelOrder: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
 function shouldLog(level: LogLevel): boolean {

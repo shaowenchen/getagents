@@ -1,8 +1,8 @@
 import { escapeHtml, agentInitial, truncate, avatarColor, formatDateShort } from './utils.js';
-import { api } from './api.js';
+import { api, getAdminApiKey, publicUrl } from './api.js';
 import { render, navigate } from './router.js';
 import { state } from './state.js';
-import { toast } from './admin.js';
+import { toast, buildCliCommand, buildCliBaseUrl } from './admin.js';
 
 async function renderAgentDetail(agentId) {
   state.detailAgentId = agentId;
@@ -37,7 +37,6 @@ async function renderAgentDetail(agentId) {
               <span class="agent-chip">File: ${escapeHtml(truncate(agent.filename || 'N/A', 50))}</span>
               <span class="agent-chip">Size: ${formatFileSize(agent.fileSize || 0)}</span>
               <span class="agent-chip">SHA-256: ${escapeHtml(truncate(agent.fileHash || '', 16))}</span>
-              ${agent.category ? `<span class="agent-chip">Category: ${escapeHtml(agent.category)}</span>` : ''}
               <span class="agent-chip">Created: ${formatDateShort(agent.createdAt)}</span>
               <span class="agent-chip">Updated: ${formatDateShort(agent.updatedAt)}</span>
               <span class="agent-chip">Downloads: ${agent.downloadCount || 0}</span>
@@ -51,6 +50,8 @@ async function renderAgentDetail(agentId) {
           </div>
         </div>
       </div>
+
+      ${renderAgentCliPanel(agent)}
 
       <div class="card" style="margin-bottom:1rem">
         <h3 style="margin-bottom:0.75rem">Version History (${versions.length})</h3>
@@ -67,7 +68,7 @@ async function renderAgentDetail(agentId) {
                 <span style="color:var(--muted);margin-left:0.5rem;font-size:0.82rem">${formatTime(agent.updatedAt)}</span>
               </div>
               <div style="display:flex;gap:0.35rem">
-                <a href="${window.__GETAGENTS_CONFIG__.apiPrefix || '/getagents/api'}/agents/${agent.id}/download/${v.version}" class="btn-ghost" style="font-size:0.78rem;text-decoration:none;display:inline-block;padding:0.28rem 0.58rem">Download</a>
+                <a href="${publicUrl(`/api/agents/${agent.id}/download/${v.version}`)}" class="btn-ghost" style="font-size:0.78rem;text-decoration:none;display:inline-block;padding:0.28rem 0.58rem">Download</a>
                 <button class="btn-ghost" style="font-size:0.78rem" onclick="rollbackVersion('${agent.id}', ${v.version})">Rollback</button>
               </div>
             </div>
@@ -82,6 +83,37 @@ async function renderAgentDetail(agentId) {
       render(`<div class="empty-state"><h3>Authentication required</h3><p class="text-muted"><a href="javascript:void(0)" onclick="navigateTo('/admin')">Go to Admin</a></p></div>`);
     }
   }
+}
+
+function renderAgentCliPanel(agent) {
+  const apiKey = getAdminApiKey();
+  const base = buildCliBaseUrl();
+  const cmd = buildCliCommand({ agentId: agent.id });
+  return `
+    <div class="card cli-panel" style="margin-bottom:1rem">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem;flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0">Update from CLI</h3>
+          <p class="text-muted" style="margin:0.2rem 0 0;font-size:0.85rem">
+            Run this in the agent's working directory to create a new version of
+            <strong>${escapeHtml(agent.name)}</strong>.
+          </p>
+        </div>
+      </div>
+
+      ${apiKey ? '' : `
+        <div style="margin-top:0.75rem;padding:0.55rem 0.7rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;color:#9a3412;font-size:0.82rem">
+          Replace <code>&lt;your-api-key&gt;</code> with your API key. Sign in again to inject it automatically.
+        </div>
+      `}
+
+      <pre class="cli-code" style="margin-top:0.65rem"><code id="cli-cmd-detail">${escapeHtml(cmd)}</code></pre>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+        <button class="btn-ghost" onclick="copyCliCommand('cli-cmd-detail')">Copy command</button>
+        <a class="btn-ghost" style="text-decoration:none;display:inline-block" href="${base}/cli/upload.sh" target="_blank" rel="noopener">View script</a>
+      </div>
+    </div>
+  `;
 }
 
 function formatFileSize(bytes) {

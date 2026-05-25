@@ -1,6 +1,6 @@
 import mysql, { type Pool, type PoolOptions, type RowDataPacket, type ResultSetHeader } from 'mysql2/promise';
 import { v4 as uuid } from 'uuid';
-import type { AgentConfig, AgentVersion, AgentSnapshot, User } from '../shared/types.js';
+import type { AgentConfig, AgentVersion, AgentSnapshot, ManagedTag, User } from '../shared/types.js';
 import { deleteAgentFiles } from '../utils/fileStore.js';
 
 const dsn = process.env.SQL_DSN;
@@ -23,6 +23,7 @@ async function init(): Promise<void> {
   await db.query(`DROP TABLE IF EXISTS agent_imports`);
   await db.query(`DROP TABLE IF EXISTS agent_versions`);
   await db.query(`DROP TABLE IF EXISTS agents`);
+  await db.query(`DROP TABLE IF EXISTS managed_tags`);
   await db.query(`DROP TABLE IF EXISTS users`);
 
   await db.query(`
@@ -32,6 +33,17 @@ async function init(): Promise<void> {
       password_hash TEXT NOT NULL,
       created_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  await db.query(`
+    CREATE TABLE managed_tags (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      name VARCHAR(64) NOT NULL,
+      created_at BIGINT NOT NULL,
+      UNIQUE KEY uniq_managed_tags_user_name (user_id, name),
+      CONSTRAINT fk_managed_tags_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
@@ -48,7 +60,6 @@ async function init(): Promise<void> {
       enabled TINYINT(1) NOT NULL,
       is_public TINYINT(1) NOT NULL DEFAULT 0,
       tags_json JSON,
-      category VARCHAR(64),
       download_count INT NOT NULL DEFAULT 0,
       likes_count INT NOT NULL DEFAULT 0,
       share_token VARCHAR(64),
@@ -128,13 +139,17 @@ type AgentRow = RowDataPacket & {
   id: string; user_id: string; name: string; avatar: string | null; description: string;
   filename: string; file_size: number; file_hash: string;
   enabled: number; is_public: number; tags_json: string | null;
-  category: string | null; download_count: number; likes_count: number;
+  download_count: number; likes_count: number;
   share_token: string | null; share_password: string | null;
   created_at: number; updated_at: number;
 };
 
 type UserRow = RowDataPacket & {
   id: string; username: string; password_hash: string; created_at: number;
+};
+
+type ManagedTagRow = RowDataPacket & {
+  id: string; user_id: string; name: string; created_at: number;
 };
 
 type VersionRow = RowDataPacket & {
@@ -159,7 +174,6 @@ function toAgent(row: AgentRow): AgentConfig {
     fileSize: Number(row.file_size || 0), fileHash: row.file_hash,
     enabled: Boolean(row.enabled),
     tags: parseJson<string[] | undefined>(row.tags_json, undefined),
-    category: row.category ?? undefined,
     isPublic: Boolean(row.is_public),
     downloadCount: Number(row.download_count || 0),
     likesCount: Number(row.likes_count || 0),
@@ -186,7 +200,6 @@ function agentSnapshotFields(agent: AgentConfig): Record<string, unknown> {
     fileSize: agent.fileSize,
     fileHash: agent.fileHash,
     tags: agent.tags,
-    category: agent.category,
     avatar: agent.avatar,
   };
 }
@@ -197,14 +210,14 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
   await db.execute(`
     INSERT INTO agents (
       id, user_id, name, avatar, description, filename, file_size, file_hash,
-      enabled, is_public, tags_json, category, download_count, likes_count,
+      enabled, is_public, tags_json, download_count, likes_count,
       share_token, share_password, created_at, updated_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON DUPLICATE KEY UPDATE
       name=VALUES(name), avatar=VALUES(avatar), description=VALUES(description),
       filename=VALUES(filename), file_size=VALUES(file_size), file_hash=VALUES(file_hash),
       enabled=VALUES(enabled), is_public=VALUES(is_public),
-      tags_json=VALUES(tags_json), category=VALUES(category),
+      tags_json=VALUES(tags_json),
       download_count=VALUES(download_count), likes_count=VALUES(likes_count),
       share_token=VALUES(share_token), share_password=VALUES(share_password),
       updated_at=VALUES(updated_at)
@@ -212,7 +225,7 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
     agent.id, agent.userId, agent.name, agent.avatar ?? null, agent.description,
     agent.filename, agent.fileSize, agent.fileHash,
     agent.enabled ? 1 : 0, agent.isPublic ? 1 : 0,
-    stringifyOptional(agent.tags), agent.category ?? null,
+    stringifyOptional(agent.tags),
     agent.downloadCount || 0, agent.likesCount || 0,
     agent.shareToken ?? null, agent.sharePassword ?? null,
     agent.createdAt, agent.updatedAt,
@@ -263,6 +276,73 @@ export async function getAllUsers(): Promise<(User & { passwordHash: string })[]
   }));
 }
 
+// ---- Managed Tags ----
+
+function toManagedTag(row: ManagedTagRow): ManagedTag {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    createdAt: Number(row.created_at),
+  };
+}
+
+export async function getManagedTags(userId: string): Promise<ManagedTag[]> {
+  await ensureReady();
+  const db = requirePool();
+  const [rows] = await db.execute<ManagedTagRow[]>(
+    'SELECT * FROM managed_tags WHERE user_id = ? ORDER BY name',
+    [userId]
+  );
+  return rows.map(toManagedTag);
+}
+
+export async function createManagedTag(userId: string, name: string): Promise<ManagedTag> {
+  await ensureReady();
+  const db = requirePool();
+  const normalized = name.trim();
+  if (!normalized) throw new Error('Tag name is required');
+
+  const [existing] = await db.execute<ManagedTagRow[]>(
+    'SELECT * FROM managed_tags WHERE user_id = ? AND name = ?',
+    [userId, normalized]
+  );
+  if (existing[0]) return toManagedTag(existing[0]);
+
+  const id = uuid();
+  const now = Date.now();
+  await db.execute(
+    'INSERT INTO managed_tags (id,user_id,name,created_at) VALUES (?,?,?,?)',
+    [id, userId, normalized, now]
+  );
+  return { id, userId, name: normalized, createdAt: now };
+}
+
+export async function deleteManagedTag(userId: string, tagId: string): Promise<boolean> {
+  await ensureReady();
+  const db = requirePool();
+  const [rows] = await db.execute<ManagedTagRow[]>(
+    'SELECT * FROM managed_tags WHERE id = ? AND user_id = ?',
+    [tagId, userId]
+  );
+  const tag = rows[0];
+  if (!tag) return false;
+
+  const [result] = await db.execute<ResultSetHeader>(
+    'DELETE FROM managed_tags WHERE id = ? AND user_id = ?',
+    [tagId, userId]
+  );
+
+  const agents = await getAllAgents(userId);
+  for (const agent of agents) {
+    const tags = (agent.tags || []).filter(t => t !== tag.name);
+    if (tags.length !== (agent.tags || []).length) {
+      await updateAgent(agent.id, { tags });
+    }
+  }
+  return result.affectedRows > 0;
+}
+
 // ---- Agents ----
 
 export async function getAllAgents(userId?: string): Promise<AgentConfig[]> {
@@ -295,7 +375,6 @@ export async function createAgent(userId: string, input: Partial<AgentConfig> & 
     fileHash: input.fileHash,
     enabled: input.enabled !== false,
     tags: input.tags,
-    category: input.category,
     isPublic: input.isPublic || false,
     downloadCount: 0,
     likesCount: 0,
@@ -319,8 +398,7 @@ export async function updateAgent(id: string, input: Partial<AgentConfig>): Prom
   };
 
   const meaningfulChange = input.name !== undefined || input.description !== undefined
-    || input.filename !== undefined || input.tags !== undefined
-    || input.category !== undefined;
+    || input.filename !== undefined || input.tags !== undefined;
   if (meaningfulChange) await createVersion(id, 'Update');
 
   await saveAgent(updated);

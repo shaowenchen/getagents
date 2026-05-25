@@ -70,7 +70,23 @@ button { cursor: pointer; }
 .agent-chip { max-width: 280px; display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.18rem 0.45rem; border: 1px solid var(--border); border-radius: 999px; background: #f8fafc; color: var(--muted); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-tags { display: flex; gap: 0.3rem; flex-wrap: wrap; }
 .agent-tag { padding: 0.12rem 0.45rem; border-radius: 999px; background: var(--primary-soft); color: var(--primary); font-size: 0.74rem; font-weight: 500; }
+.tag-option-list { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.tag-option { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: 999px; background: #f8fafc; color: var(--muted); font-size: 0.82rem; cursor: pointer; }
+.tag-option:has(input:checked) { background: var(--primary-soft); border-color: #bfdbfe; color: var(--primary); }
+.tag-option input { width: auto; margin: 0; }
 .agent-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+.admin-tabs { display: flex; gap: 0.45rem; margin: 0 0 1rem; border-bottom: 1px solid var(--border); }
+.admin-tab { padding: 0.55rem 0.8rem; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-weight: 600; cursor: pointer; }
+.admin-tab:hover { color: var(--text); }
+.admin-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+.admin-tab span { margin-left: 0.35rem; padding: 0.06rem 0.35rem; border-radius: 999px; background: #f1f5f9; color: inherit; font-size: 0.72rem; }
+.admin-table-card:hover { transform: none; }
+.admin-table-wrap { overflow-x: auto; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.admin-table th, .admin-table td { padding: 0.6rem 0.55rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.admin-table th { color: var(--muted); font-size: 0.76rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; background: #f8fafc; }
+.admin-table tr:last-child td { border-bottom: none; }
+.admin-table .agent-actions { min-width: 210px; }
 .agent-empty { padding: 3rem 1rem; border: 1px dashed var(--border-strong); border-radius: 16px; background: rgba(255, 255, 255, 0.55); }
 .badge-success { background: #16a34a; }
 .admin-login { max-width: 360px; margin: 3rem auto; padding: 1.5rem; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
@@ -103,7 +119,6 @@ button { cursor: pointer; }
 .mp-card-header { display: flex; align-items: flex-start; justify-content: space-between; }
 .mp-card-avatar { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 14px; color: white; font-weight: 700; font-size: 1.05rem; box-shadow: 0 6px 16px rgba(37,99,235,0.2); flex-shrink: 0; }
 .mp-card-badges { display: flex; gap: 0.3rem; flex-wrap: wrap; justify-content: flex-end; }
-.mp-badge-cat { padding: 0.2rem 0.55rem; border-radius: 999px; background: #ede9fe; color: #7c3aed; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.01em; }
 .mp-card-body { flex: 1; display: grid; gap: 0.45rem; }
 .mp-card-name { font-size: 0.98rem; font-weight: 700; letter-spacing: -0.01em; }
 .mp-card-desc { color: var(--muted); font-size: 0.85rem; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -120,6 +135,14 @@ button { cursor: pointer; }
 .mp-empty-icon { margin-bottom: 0.75rem; }
 .mp-empty h3 { font-size: 1.1rem; color: var(--text); margin-bottom: 0.35rem; }
 .mp-empty p { color: var(--muted); font-size: 0.9rem; }
+/* ---- CLI panel ---- */
+.cli-panel { background: linear-gradient(180deg, #f8fbff 0%, var(--surface) 100%); border-color: #c7d2fe; }
+.cli-step-label { font-weight: 600; font-size: 0.82rem; color: var(--text); margin-bottom: 0.35rem; }
+.cli-code { display: block; padding: 0.6rem 0.75rem; background: #0f172a; color: #e2e8f0; border-radius: 10px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.82rem; line-height: 1.55; overflow-x: auto; margin: 0.35rem 0 0.5rem; white-space: pre-wrap; word-break: break-all; }
+.cli-code code { background: transparent; color: inherit; font-family: inherit; }
+.cli-options { list-style: disc; padding-left: 1.1rem; color: var(--muted); font-size: 0.85rem; line-height: 1.6; }
+.cli-options code { background: #f1f5f9; padding: 0.05rem 0.35rem; border-radius: 5px; color: var(--text); font-size: 0.82rem; }
+.cli-mini { font-size: 0.78rem; padding: 0.5rem 0.65rem; border-radius: 8px; }
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 720px) {
   .mp-toolbar { flex-direction: column; }

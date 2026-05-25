@@ -3,6 +3,7 @@ import * as db from '../db/store.js';
 import { requireAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { saveAgentFile, getAgentFileStream, copyAgentFiles, deleteAgentFiles } from '../utils/fileStore.js';
+import { inferAccessUrl, normalizeRoutePrefix } from '../utils/accessUrl.js';
 import type { AgentConfig } from '../shared/types.js';
 import crypto from 'crypto';
 import multer from 'multer';
@@ -10,7 +11,7 @@ import { existsSync } from 'fs';
 
 const router = Router();
 
-const maxUploadSize = Number(process.env.MAX_UPLOAD_SIZE || 104857600); // 100MB default
+const maxUploadSize = Number(process.env.MAX_UPLOAD_MB || 100) * 1024 * 1024;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: maxUploadSize },
@@ -22,6 +23,25 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+function parseTagInput(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (Array.isArray(value)) return value.map((t) => String(t).trim()).filter(Boolean);
+  return String(value).split(',').map((t) => t.trim()).filter(Boolean);
+}
+
+async function validateManagedTags(userId: string, value: unknown): Promise<string[] | undefined> {
+  const tags = parseTagInput(value);
+  if (tags === undefined) return undefined;
+
+  const allowed = new Set((await db.getManagedTags(userId)).map((tag) => tag.name));
+  const invalid = tags.filter((tag) => !allowed.has(tag));
+  if (invalid.length) {
+    throw new Error(`Unknown tags: ${invalid.join(', ')}`);
+  }
+
+  return [...new Set(tags)];
+}
 
 // ---- Agent CRUD ----
 
@@ -39,7 +59,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
 router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (req, res) => {
   const userId = (req as any).userId;
-  const { name, description, tags, category, isPublic, avatar } = req.body;
+  const { name, description, tags, isPublic, avatar } = req.body;
   if (!name || !description) {
     return res.status(400).json({ error: 'name and description are required' });
   }
@@ -48,6 +68,12 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
   }
 
   const enabled = req.body.enabled === undefined ? true : req.body.enabled === 'true' || req.body.enabled === true;
+  let selectedTags: string[] | undefined;
+  try {
+    selectedTags = await validateManagedTags(userId, tags);
+  } catch (err) {
+    return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid tags' });
+  }
 
   // Create the agent record first to get an ID
   const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
@@ -59,8 +85,7 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
     fileHash,
     enabled,
     avatar,
-    tags: typeof tags === 'string' ? tags.split(',').map((t: string) => t.trim()).filter(Boolean) : tags,
-    category,
+    tags: selectedTags,
     isPublic: isPublic === 'true' || isPublic === true,
   });
 
@@ -81,11 +106,12 @@ router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (
   if (req.body.description !== undefined) patch.description = req.body.description;
   if (req.body.enabled !== undefined) patch.enabled = req.body.enabled === 'true' || req.body.enabled === true;
   if (req.body.isPublic !== undefined) patch.isPublic = req.body.isPublic === 'true' || req.body.isPublic === true;
-  if (req.body.category !== undefined) patch.category = req.body.category;
   if (req.body.tags !== undefined) {
-    patch.tags = typeof req.body.tags === 'string'
-      ? req.body.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
-      : req.body.tags;
+    try {
+      patch.tags = await validateManagedTags((req as any).userId, req.body.tags);
+    } catch (err) {
+      return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid tags' });
+    }
   }
 
   if (req.file) {
@@ -193,7 +219,7 @@ router.post('/:id/share', requireAuth, asyncHandler(async (req, res) => {
   res.json({
     token: shareToken,
     password: sharePassword,
-    url: `${req.protocol}://${req.get('host')}/share/${shareToken}`,
+    url: `${inferAccessUrl(req, normalizeRoutePrefix(process.env.URI_PREFIX || '/getagents'))}/share/${shareToken}`,
   });
 }));
 

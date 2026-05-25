@@ -7,7 +7,11 @@ import agentsRouter from './routes/agents.js';
 import marketplaceRouter from './routes/marketplace.js';
 import shareRouter from './routes/share.js';
 import adminRouter from './routes/admin.js';
+import cliRouter from './routes/cli.js';
 import { createLogger } from './utils/logger.js';
+import { renderUploadScript } from './utils/cliScript.js';
+import { ensureAdminUser } from './utils/ensureAdmin.js';
+import { getConfiguredAccessUrl, inferAccessUrl } from './utils/accessUrl.js';
 
 const log = createLogger('server');
 
@@ -18,6 +22,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const URI_PREFIX = normalizeRoutePrefix(process.env.URI_PREFIX || '/getagents');
+const ACCESS_URL = getConfiguredAccessUrl();
 const publicDir = join(__dirname, 'public');
 const indexHtmlPath = join(publicDir, 'index.html');
 const indexHtmlCached = readFileSync(indexHtmlPath, 'utf8');
@@ -41,6 +46,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 const appConfigScript = `window.__GETAGENTS_CONFIG__ = ${JSON.stringify({
   routePrefix: URI_PREFIX,
   apiPrefix: `${URI_PREFIX}/api`,
+  accessUrl: ACCESS_URL,
 })};`;
 
 function mountApp(prefix: string) {
@@ -49,11 +55,18 @@ function mountApp(prefix: string) {
   app.use(`${base}/api/admin`, adminRouter);
   app.use(`${base}/api/agents`, agentsRouter);
   app.use(`${base}/api/marketplace`, marketplaceRouter);
+  app.use(`${base}/api/cli`, cliRouter);
   app.use(`${base}/share`, shareRouter);
 
   app.get(`${base}/app-config.js`, (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.type('application/javascript').send(appConfigScript);
+  });
+
+  app.get(`${base}/cli/upload.sh`, (req, res) => {
+    const endpoint = inferAccessUrl(req, base);
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('text/x-shellscript').send(renderUploadScript(endpoint));
   });
 
   app.use(base || '/', express.static(publicDir, {
@@ -89,13 +102,28 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: message });
 });
 
-app.listen(Number(PORT), HOST, () => {
+app.listen(Number(PORT), HOST, async () => {
+  // Ensure admin user exists from ADMIN_API_KEY env var
+  if (process.env.ADMIN_API_KEY) {
+    try {
+      const admin = await ensureAdminUser(process.env.ADMIN_API_KEY);
+      log.info('Admin user ready', { username: admin.username });
+    } catch (err) {
+      log.error('Failed to ensure admin user', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  } else {
+    log.warn('ADMIN_API_KEY not set, admin user not initialized');
+  }
+
   log.info('GetAgents started', {
     host: HOST,
     port: Number(PORT),
     uriPrefix: URI_PREFIX || '/',
-    logLevel: (process.env.LOG_LEVEL || 'info').toLowerCase(),
+    logLevel: (process.env.LOG_LEVEL || 'debug').toLowerCase(),
     sqlDsn: Boolean(process.env.SQL_DSN),
-    maxUploadSize: process.env.MAX_UPLOAD_SIZE || '104857600',
+    maxUploadMb: process.env.MAX_UPLOAD_MB || '100',
+    accessUrl: ACCESS_URL || 'auto',
   });
 });

@@ -16,6 +16,11 @@ export const createAgent = store.createAgent;
 export const updateAgent = store.updateAgent;
 export const deleteAgent = store.deleteAgent;
 
+// Managed tags
+export const getManagedTags = store.getManagedTags;
+export const createManagedTag = store.createManagedTag;
+export const deleteManagedTag = store.deleteManagedTag;
+
 // Version management
 export const getVersions = store.getVersions;
 export const getVersion = store.getVersion;

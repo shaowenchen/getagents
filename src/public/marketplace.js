@@ -5,19 +5,18 @@ import { state } from './state.js';
 import { toast } from './admin.js';
 
 async function renderMarketplace() {
-  const { search, category, tag, sort } = state;
+  const { search, tag, sort } = state;
   const params = new URLSearchParams();
   if (search) params.set('search', search);
-  if (category) params.set('category', category);
   if (tag) params.set('tag', tag);
   if (sort && sort !== 'popular') params.set('sort', sort);
 
   const [agents, meta] = await Promise.all([
     api(`/marketplace?${params.toString()}`),
-    api('/marketplace/categories').catch(() => ({ categories: [], tags: [] })),
+    api('/marketplace/tags').catch(() => ({ tags: [] })),
   ]);
 
-  const hasActiveFilters = search || category || tag;
+  const hasActiveFilters = search || tag;
 
   render(`
     <div class="mp-toolbar">
@@ -28,10 +27,6 @@ async function renderMarketplace() {
         ${search ? `<button class="mp-search-clear" onclick="marketplaceSearch('')">&times;</button>` : ''}
       </div>
       <div class="mp-filter-group">
-        <select class="mp-select" onchange="marketplaceFilter('category', this.value)">
-          <option value="">All Categories</option>
-          ${meta.categories.map(c => `<option value="${escapeHtml(c)}" ${category === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
-        </select>
         <select class="mp-select" onchange="marketplaceFilter('tag', this.value)">
           <option value="">All Tags</option>
           ${meta.tags.map(t => `<option value="${escapeHtml(t)}" ${tag === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
@@ -52,7 +47,6 @@ async function renderMarketplace() {
     <div class="mp-active-filters">
       <span class="mp-filter-label">Active filters:</span>
       ${search ? `<span class="mp-filter-chip">Search: "${escapeHtml(search)}" <button onclick="marketplaceSearch('')">&times;</button></span>` : ''}
-      ${category ? `<span class="mp-filter-chip">Category: ${escapeHtml(category)} <button onclick="marketplaceFilter('category','')">&times;</button></span>` : ''}
       ${tag ? `<span class="mp-filter-chip">Tag: ${escapeHtml(tag)} <button onclick="marketplaceFilter('tag','')">&times;</button></span>` : ''}
       <button class="mp-clear-all" onclick="clearAllFilters()">Clear all</button>
     </div>
@@ -84,9 +78,6 @@ function renderMarketplaceCard(agent) {
     <div class="mp-card">
       <div class="mp-card-header">
         <div class="mp-card-avatar" style="background:${color}">${initial}</div>
-        <div class="mp-card-badges">
-          ${agent.category ? `<span class="mp-badge-cat">${escapeHtml(agent.category)}</span>` : ''}
-        </div>
       </div>
       <div class="mp-card-body">
         <h3 class="mp-card-name">${escapeHtml(agent.name)}</h3>
@@ -137,15 +128,13 @@ window.marketplaceSearch = (value) => {
 };
 
 window.marketplaceFilter = (key, value) => {
-  if (key === 'category') state.marketplaceCategory = value;
-  else if (key === 'tag') state.marketplaceTag = value;
+  if (key === 'tag') state.marketplaceTag = value;
   else if (key === 'sort') state.marketplaceSort = value;
   renderMarketplace();
 };
 
 window.clearAllFilters = () => {
   state.marketplaceSearch = '';
-  state.marketplaceCategory = '';
   state.marketplaceTag = '';
   renderMarketplace();
 };

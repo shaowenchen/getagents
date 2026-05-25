@@ -1,12 +1,19 @@
-import { ADMIN_TOKEN_KEY, appConfig } from './state.js';
+import { ADMIN_TOKEN_KEY, ADMIN_API_KEY_KEY, appConfig } from './state.js';
 
 const routePrefix = normalizePrefix(appConfig.routePrefix || '');
 const apiPrefix = appConfig.apiPrefix || `${routePrefix}/api`;
+const accessBaseUrl = normalizeAccessUrl(appConfig.accessUrl || '');
 
 function normalizePrefix(value) {
   const trimmed = String(value || '').trim();
   if (!trimmed || trimmed === '/') return '';
   return '/' + trimmed.replace(/^\/+|\/+$/g, '');
+}
+
+function normalizeAccessUrl(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  return trimmed.replace(/\/+$/g, '');
 }
 
 function routeHref(path) {
@@ -29,18 +36,33 @@ function apiPath(path) {
   return apiPrefix + path;
 }
 
+function publicUrl(path = '') {
+  const base = accessBaseUrl || `${window.location.origin}${routePrefix}`;
+  return `${base}${path}`;
+}
+
 function getAdminToken() {
   return sessionStorage.getItem(ADMIN_TOKEN_KEY) || '';
 }
 
-function setAdminToken(token, username) {
+function setAdminToken(token, username, apiKey) {
   sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
   if (username) sessionStorage.setItem('admin_username', username);
+  if (apiKey) sessionStorage.setItem(ADMIN_API_KEY_KEY, apiKey);
 }
 
 function clearAdminToken() {
   sessionStorage.removeItem(ADMIN_TOKEN_KEY);
   sessionStorage.removeItem('admin_username');
+  sessionStorage.removeItem(ADMIN_API_KEY_KEY);
+}
+
+function getAdminApiKey() {
+  return sessionStorage.getItem(ADMIN_API_KEY_KEY) || '';
+}
+
+function setAdminApiKey(apiKey) {
+  if (apiKey) sessionStorage.setItem(ADMIN_API_KEY_KEY, apiKey);
 }
 
 async function api(path, options = {}) {
@@ -96,14 +118,19 @@ async function apiUpload(path, formData, options = {}) {
 export {
   routePrefix,
   apiPrefix,
+  accessBaseUrl,
   normalizePrefix,
+  normalizeAccessUrl,
   routeHref,
   stripRoutePrefix,
   apiUrl,
   apiPath,
+  publicUrl,
   api,
   apiUpload,
   getAdminToken,
   setAdminToken,
   clearAdminToken,
+  getAdminApiKey,
+  setAdminApiKey,
 };

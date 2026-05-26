@@ -1,3 +1,11 @@
+import {
+  CopyObjectCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { homedir } from 'os';
 import { join } from 'path';
 import { mkdirSync, existsSync, copyFileSync, rmSync, createReadStream } from 'fs';
@@ -9,8 +17,50 @@ const AGENTS_ROOT = join(homedir(), '.getagents', 'agents');
 const STORAGE_DRIVER = (process.env.STORAGE_DRIVER || 'local').toLowerCase();
 const AGFS_API_URL = (process.env.AGFS_API_URL || 'http://localhost:8080').replace(/\/+$/g, '');
 const AGFS_ROOT_PATH = normalizeAgfsPath(process.env.AGFS_ROOT_PATH || '/s3fs/getagents');
+const S3_BUCKET = process.env.S3_BUCKET || 'getagents';
+const S3_KEY_PREFIX = normalizeS3Prefix(process.env.S3_KEY_PREFIX || 'agents');
+const S3_REGION = process.env.S3_REGION || 'us-east-1';
+const S3_FORCE_PATH_STYLE = (process.env.S3_FORCE_PATH_STYLE || 'true').toLowerCase() === 'true';
 
 type AgentFileStream = NodeJS.ReadableStream;
+
+function createS3Client(): S3Client {
+  return new S3Client({
+    region: S3_REGION,
+    endpoint: process.env.S3_ENDPOINT || undefined,
+    forcePathStyle: S3_FORCE_PATH_STYLE,
+    credentials: process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY
+      ? {
+          accessKeyId: process.env.S3_ACCESS_KEY_ID,
+          secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+        }
+      : undefined,
+  });
+}
+
+const s3 = createS3Client();
+
+function normalizeS3Prefix(prefix: string): string {
+  return String(prefix || '').replace(/^\/+|\/+$/g, '');
+}
+
+function s3Key(...parts: string[]): string {
+  return [S3_KEY_PREFIX, ...parts]
+    .map((part) => part.replace(/^\/+|\/+$/g, ''))
+    .filter(Boolean)
+    .join('/');
+}
+
+function isReadableStream(value: unknown): value is NodeJS.ReadableStream {
+  return Boolean(value && typeof (value as NodeJS.ReadableStream).pipe === 'function');
+}
+
+function bodyToStream(body: unknown): AgentFileStream | null {
+  if (!body) return null;
+  if (isReadableStream(body)) return body;
+  if (body instanceof ReadableStream) return Readable.fromWeb(body);
+  return Readable.from(body as AsyncIterable<Uint8Array>);
+}
 
 function normalizeAgfsPath(path: string): string {
   const trimmed = String(path || '').trim();
@@ -90,8 +140,24 @@ async function saveAgfsAgentFile(agentId: string, version: number, buffer: Buffe
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
+async function putS3Object(key: string, buffer: Buffer): Promise<void> {
+  await s3.send(new PutObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: key,
+    Body: buffer,
+    ContentType: 'application/zip',
+  }));
+}
+
+async function saveS3AgentFile(agentId: string, version: number, buffer: Buffer): Promise<string> {
+  await putS3Object(s3Key(agentId, versionFileName(version)), buffer);
+  await putS3Object(s3Key(agentId, 'current.zip'), buffer);
+  return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
 async function saveAgentFile(agentId: string, version: number, buffer: Buffer): Promise<string> {
   if (STORAGE_DRIVER === 'agfs') return saveAgfsAgentFile(agentId, version, buffer);
+  if (STORAGE_DRIVER === 's3') return saveS3AgentFile(agentId, version, buffer);
   return saveLocalAgentFile(agentId, version, buffer);
 }
 
@@ -144,8 +210,43 @@ async function copyAgfsAgentFiles(fromAgentId: string, toAgentId: string): Promi
   }
 }
 
+async function listS3AgentKeys(agentId: string): Promise<string[]> {
+  const prefix = `${s3Key(agentId)}/`;
+  const keys: string[] = [];
+  let continuationToken: string | undefined;
+
+  do {
+    const result = await s3.send(new ListObjectsV2Command({
+      Bucket: S3_BUCKET,
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }));
+    for (const item of result.Contents || []) {
+      if (item.Key) keys.push(item.Key);
+    }
+    continuationToken = result.NextContinuationToken;
+  } while (continuationToken);
+
+  return keys;
+}
+
+async function copyS3AgentFiles(fromAgentId: string, toAgentId: string): Promise<void> {
+  const keys = await listS3AgentKeys(fromAgentId);
+  for (const key of keys) {
+    const fileName = key.split('/').filter(Boolean).at(-1);
+    if (!fileName) continue;
+    await s3.send(new CopyObjectCommand({
+      Bucket: S3_BUCKET,
+      CopySource: encodeURIComponent(`${S3_BUCKET}/${key}`),
+      Key: s3Key(toAgentId, fileName),
+      ContentType: 'application/zip',
+    }));
+  }
+}
+
 async function copyAgentFiles(fromAgentId: string, toAgentId: string): Promise<void> {
   if (STORAGE_DRIVER === 'agfs') return copyAgfsAgentFiles(fromAgentId, toAgentId);
+  if (STORAGE_DRIVER === 's3') return copyS3AgentFiles(fromAgentId, toAgentId);
   return copyLocalAgentFiles(fromAgentId, toAgentId);
 }
 
@@ -163,8 +264,22 @@ async function deleteAgfsAgentFiles(agentId: string): Promise<void> {
   }
 }
 
+async function deleteS3AgentFiles(agentId: string): Promise<void> {
+  const keys = await listS3AgentKeys(agentId);
+  if (!keys.length) return;
+
+  await s3.send(new DeleteObjectsCommand({
+    Bucket: S3_BUCKET,
+    Delete: {
+      Objects: keys.map((Key) => ({ Key })),
+      Quiet: true,
+    },
+  }));
+}
+
 async function deleteAgentFiles(agentId: string): Promise<void> {
   if (STORAGE_DRIVER === 'agfs') return deleteAgfsAgentFiles(agentId);
+  if (STORAGE_DRIVER === 's3') return deleteS3AgentFiles(agentId);
   return deleteLocalAgentFiles(agentId);
 }
 
@@ -190,8 +305,26 @@ async function getAgfsAgentFileStream(agentId: string, version?: number): Promis
   return Readable.fromWeb(res.body as import('stream/web').ReadableStream);
 }
 
+async function getS3AgentFileStream(agentId: string, version?: number): Promise<AgentFileStream | null> {
+  const fileName = version !== undefined ? versionFileName(version) : 'current.zip';
+  try {
+    const result = await s3.send(new GetObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: s3Key(agentId, fileName),
+    }));
+    return bodyToStream(result.Body);
+  } catch (err) {
+    const name = err instanceof Error ? err.name : '';
+    if (name === 'NoSuchKey' || name === 'NotFound') return null;
+    const statusCode = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+    if (statusCode === 404) return null;
+    throw err;
+  }
+}
+
 async function getAgentFileStream(agentId: string, version?: number): Promise<AgentFileStream | null> {
   if (STORAGE_DRIVER === 'agfs') return getAgfsAgentFileStream(agentId, version);
+  if (STORAGE_DRIVER === 's3') return getS3AgentFileStream(agentId, version);
   return getLocalAgentFileStream(agentId, version);
 }
 

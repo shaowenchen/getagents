@@ -67,6 +67,12 @@ The database stores metadata only: users, managed tags, agents, versions, share 
 
 ## File Storage
 
+`STORAGE_DRIVER` currently supports three values:
+
+- `local`: store ZIP packages on the local filesystem.
+- `agfs`: store ZIP packages through an AGFS server using AGFS file paths.
+- `s3`: store ZIP packages directly in an S3-compatible object store.
+
 Default local storage:
 
 ```env
@@ -107,7 +113,32 @@ Stored package paths:
 /s3fs/getagents/agents/<agentId>/v2.zip
 ```
 
-To store packages in S3, configure S3 in AGFS and point `AGFS_ROOT_PATH` at the mounted S3 path, for example `/s3fs/getagents`.
+To store packages in S3 through AGFS, configure S3 in AGFS and point `AGFS_ROOT_PATH` at the mounted S3 path, for example `/s3fs/getagents`.
+
+### S3 Storage
+
+Configure GetAgents to write ZIP packages directly to S3:
+
+```env
+STORAGE_DRIVER=s3
+S3_ENDPOINT=
+S3_REGION=us-east-1
+S3_BUCKET=getagents
+S3_KEY_PREFIX=agents
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
+S3_FORCE_PATH_STYLE=true
+```
+
+Stored object keys:
+
+```text
+agents/<agentId>/current.zip
+agents/<agentId>/v1.zip
+agents/<agentId>/v2.zip
+```
+
+For AWS S3, `S3_ENDPOINT` can be left empty. For S3-compatible services such as MinIO, set `S3_ENDPOINT` and usually keep `S3_FORCE_PATH_STYLE=true`.
 
 ## CLI Upload
 
@@ -144,4 +175,6 @@ Before deploying, update:
 - `SESSION_SECRET`
 - `ADMIN_API_KEY`
 - `SQL_DSN`, if using MySQL
-- `STORAGE_DRIVER`, `AGFS_API_URL`, and `AGFS_ROOT_PATH`, if using AGFS storage
+- `STORAGE_DRIVER`
+- `AGFS_API_URL` and `AGFS_ROOT_PATH`, if using AGFS storage
+- `S3_*`, if using direct S3 storage

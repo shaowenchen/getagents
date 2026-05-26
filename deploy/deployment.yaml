@@ -45,6 +45,12 @@ spec:
               value: "100"
             - name: ADMIN_API_KEY
               value: "user-admin-api-key-change-me"
+            - name: STORAGE_DRIVER
+              value: "local"
+            - name: AGFS_API_URL
+              value: "http://agfs:8080"
+            - name: AGFS_ROOT_PATH
+              value: "/s3fs/getagents"
           readinessProbe:
             httpGet:
               path: /health

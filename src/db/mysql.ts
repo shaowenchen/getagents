@@ -410,7 +410,7 @@ export async function deleteAgent(id: string): Promise<boolean> {
   const db = requirePool();
   const [result] = await db.execute<ResultSetHeader>('DELETE FROM agents WHERE id = ?', [id]);
   if (result.affectedRows > 0) {
-    deleteAgentFiles(id);
+    await deleteAgentFiles(id);
   }
   return result.affectedRows > 0;
 }

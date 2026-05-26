@@ -282,7 +282,7 @@ export async function updateAgent(id: string, data: Partial<AgentConfig>): Promi
 export async function deleteAgent(id: string): Promise<boolean> {
   const result = db.prepare('DELETE FROM agents WHERE id = ?').run(id);
   if (result.changes > 0) {
-    deleteAgentFiles(id);
+    await deleteAgentFiles(id);
   }
   return result.changes > 0;
 }

@@ -140,8 +140,8 @@ router.get('/:id/download', asyncHandler(async (req, res) => {
   const agent = await db.getAgent(req.params.id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-  const stream = getAgentFileStream(req.params.id);
-  if (!stream) return res.status(404).json({ error: 'Agent file not found on disk' });
+  const stream = await getAgentFileStream(req.params.id);
+  if (!stream) return res.status(404).json({ error: 'Agent file not found' });
 
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${agent.filename}"`);
@@ -156,8 +156,8 @@ router.get('/:id/download/:version', asyncHandler(async (req, res) => {
   const version = Number(req.params.version);
   if (isNaN(version)) return res.status(400).json({ error: 'Invalid version number' });
 
-  const stream = getAgentFileStream(req.params.id, version);
-  if (!stream) return res.status(404).json({ error: 'Version file not found on disk' });
+  const stream = await getAgentFileStream(req.params.id, version);
+  if (!stream) return res.status(404).json({ error: 'Version file not found' });
 
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${agent.name}-v${version}.zip"`);

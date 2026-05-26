@@ -17,22 +17,25 @@ const AGENTS_ROOT = join(homedir(), '.getagents', 'agents');
 const STORAGE_DRIVER = (process.env.STORAGE_DRIVER || 'local').toLowerCase();
 const AGFS_API_URL = (process.env.AGFS_API_URL || 'http://localhost:8080').replace(/\/+$/g, '');
 const AGFS_ROOT_PATH = normalizeAgfsPath(process.env.AGFS_ROOT_PATH || '/s3fs/getagents');
-const S3_BUCKET = process.env.S3_BUCKET || 'getagents';
-const S3_KEY_PREFIX = normalizeS3Prefix(process.env.S3_KEY_PREFIX || 'agents');
-const S3_REGION = process.env.S3_REGION || 'us-east-1';
-const S3_FORCE_PATH_STYLE = (process.env.S3_FORCE_PATH_STYLE || 'true').toLowerCase() === 'true';
+const S3_LOCATION = parseS3Uri(process.env.AWS_BUCKET_URI || process.env.S3_URI || '', process.env.S3_BUCKET || 'getagents', process.env.S3_PREFIX || process.env.S3_KEY_PREFIX || 'agents');
+const S3_BUCKET = S3_LOCATION.bucket;
+const S3_KEY_PREFIX = S3_LOCATION.prefix;
+const S3_REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || process.env.S3_REGION || 'us-east-1';
+const S3_ENDPOINT = process.env.AWS_ENDPOINT_URL || process.env.S3_ENDPOINT_URL || process.env.S3_ENDPOINT || undefined;
+const S3_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || process.env.S3_ACCESS_KEY_ID;
+const S3_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || process.env.S3_SECRET_ACCESS_KEY;
 
 type AgentFileStream = NodeJS.ReadableStream;
 
 function createS3Client(): S3Client {
   return new S3Client({
     region: S3_REGION,
-    endpoint: process.env.S3_ENDPOINT || undefined,
-    forcePathStyle: S3_FORCE_PATH_STYLE,
-    credentials: process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY
+    endpoint: S3_ENDPOINT,
+    forcePathStyle: true,
+    credentials: S3_ACCESS_KEY_ID && S3_SECRET_ACCESS_KEY
       ? {
-          accessKeyId: process.env.S3_ACCESS_KEY_ID,
-          secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+          accessKeyId: S3_ACCESS_KEY_ID,
+          secretAccessKey: S3_SECRET_ACCESS_KEY,
         }
       : undefined,
   });
@@ -42,6 +45,18 @@ const s3 = createS3Client();
 
 function normalizeS3Prefix(prefix: string): string {
   return String(prefix || '').replace(/^\/+|\/+$/g, '');
+}
+
+function parseS3Uri(value: string, fallbackBucket: string, fallbackPrefix: string): { bucket: string; prefix: string } {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return { bucket: fallbackBucket, prefix: normalizeS3Prefix(fallbackPrefix) };
+
+  const withoutScheme = trimmed.replace(/^s3:\/\//i, '');
+  const [bucket, ...prefixParts] = withoutScheme.split('/');
+  return {
+    bucket: bucket || fallbackBucket,
+    prefix: normalizeS3Prefix(prefixParts.join('/')),
+  };
 }
 
 function s3Key(...parts: string[]): string {

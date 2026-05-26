@@ -222,13 +222,13 @@ function toManagedAgentType(row: ManagedAgentTypeRow): ManagedAgentType {
 }
 
 const defaultAgentTypes = [
-  { name: 'workspace', backupDirs: ['$PWD'] },
-  { name: 'cursor', backupDirs: ['$HOME/.cursor'] },
-  { name: 'claude', backupDirs: ['$HOME/.claude'] },
-  { name: 'codex', backupDirs: ['$HOME/.codex'] },
-  { name: 'gemini', backupDirs: ['$HOME/.gemini'] },
-  { name: 'openclaw', backupDirs: ['$HOME/.openclaw'] },
-  { name: 'hermes-agent', backupDirs: ['$HOME/.hermes-agent'] },
+  { name: 'workspace', backupDirs: ['${PWD}'] },
+  { name: 'cursor', backupDirs: ['${HOME}/.cursor'] },
+  { name: 'claude', backupDirs: ['${HOME}/.claude'] },
+  { name: 'codex', backupDirs: ['${HOME}/.codex'] },
+  { name: 'gemini', backupDirs: ['${HOME}/.gemini'] },
+  { name: 'openclaw', backupDirs: ['${HOME}/.openclaw'] },
+  { name: 'hermes-agent', backupDirs: ['${HOME}/.hermes-agent'] },
 ];
 
 function normalizeBackupDirs(value: string[]): string[] {

@@ -295,7 +295,7 @@ function normalizeAgentType(type) {
 
 function findAgentType(type) {
   const value = normalizeAgentType(type);
-  return (state.typeOptions || []).find(item => item.name === value) || { name: value, backupDirs: ['$PWD'] };
+  return (state.typeOptions || []).find(item => item.name === value) || { name: value, backupDirs: ['${PWD}'] };
 }
 
 function agentTypeLabel(type) {
@@ -304,14 +304,14 @@ function agentTypeLabel(type) {
 
 function agentTypeSource(type) {
   const dirs = findAgentType(type).backupDirs || [];
-  return dirs.length ? dirs.join(', ') : '$PWD';
+  return dirs.length ? dirs.join(', ') : '${PWD}';
 }
 
 function buildAgentTypeOptions(selected) {
   const value = normalizeAgentType(selected);
   return (state.typeOptions || []).map(option => `
     <option value="${escapeHtml(option.name)}" ${option.name === value ? 'selected' : ''}>
-      ${escapeHtml(option.name)} (${escapeHtml((option.backupDirs || []).join(', ') || '$PWD')})
+      ${escapeHtml(option.name)} (${escapeHtml((option.backupDirs || []).join(', ') || '${PWD}')})
     </option>
   `).join('');
 }
@@ -423,7 +423,7 @@ function renderTypeManager() {
         <div style="display:grid;gap:0.45rem;min-width:280px">
           <input id="new-type-name" placeholder="Type name, e.g. cursor"
             style="padding:0.45rem 0.6rem;border:1px solid var(--border-strong);border-radius:9px">
-          <textarea id="new-type-dirs" placeholder="Backup directories, one per line&#10;$HOME/.cursor"
+          <textarea id="new-type-dirs" placeholder="Backup directories, one per line&#10;\${HOME}/.cursor"
             style="padding:0.45rem 0.6rem;border:1px solid var(--border-strong);border-radius:9px;min-height:72px"></textarea>
           <button class="btn-primary" onclick="addManagedType()">Add Type</button>
         </div>

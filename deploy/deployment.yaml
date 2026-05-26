@@ -51,20 +51,16 @@ spec:
               value: "http://agfs:8080"
             - name: AGFS_ROOT_PATH
               value: "/s3fs/getagents"
-            - name: S3_ENDPOINT
+            - name: AWS_ENDPOINT_URL
               value: ""
-            - name: S3_REGION
+            - name: AWS_DEFAULT_REGION
               value: "us-east-1"
-            - name: S3_BUCKET
-              value: "getagents"
-            - name: S3_KEY_PREFIX
-              value: "agents"
-            - name: S3_ACCESS_KEY_ID
+            - name: AWS_ACCESS_KEY_ID
               value: ""
-            - name: S3_SECRET_ACCESS_KEY
+            - name: AWS_SECRET_ACCESS_KEY
               value: ""
-            - name: S3_FORCE_PATH_STYLE
-              value: "true"
+            - name: AWS_BUCKET_URI
+              value: "s3://getagents/agents"
           readinessProbe:
             httpGet:
               path: /health

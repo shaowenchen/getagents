@@ -121,13 +121,11 @@ Configure GetAgents to write ZIP packages directly to S3:
 
 ```env
 STORAGE_DRIVER=s3
-S3_ENDPOINT=
-S3_REGION=us-east-1
-S3_BUCKET=getagents
-S3_KEY_PREFIX=agents
-S3_ACCESS_KEY_ID=
-S3_SECRET_ACCESS_KEY=
-S3_FORCE_PATH_STYLE=true
+AWS_ENDPOINT_URL=
+AWS_DEFAULT_REGION=us-east-1
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_BUCKET_URI=s3://getagents/agents
 ```
 
 Stored object keys:
@@ -138,7 +136,9 @@ agents/<agentId>/v1.zip
 agents/<agentId>/v2.zip
 ```
 
-For AWS S3, `S3_ENDPOINT` can be left empty. For S3-compatible services such as MinIO, set `S3_ENDPOINT` and usually keep `S3_FORCE_PATH_STYLE=true`.
+`AWS_BUCKET_URI` combines the bucket and key prefix. For example, `s3://getagents/agents` stores packages under the `agents/` prefix in the `getagents` bucket.
+
+For AWS S3, `AWS_ENDPOINT_URL` can be left empty. For S3-compatible services such as MinIO, set `AWS_ENDPOINT_URL`.
 
 ## CLI Upload
 
@@ -158,13 +158,13 @@ Agent types are managed from the Admin page. Each type can define one or more ba
 Default type presets are created for each user:
 
 ```text
-workspace  $PWD
-cursor     $HOME/.cursor
-claude     $HOME/.claude
-codex      $HOME/.codex
-gemini     $HOME/.gemini
-openclaw   $HOME/.openclaw
-hermes-agent $HOME/.hermes-agent
+workspace    ${PWD}
+cursor       ${HOME}/.cursor
+claude       ${HOME}/.claude
+codex        ${HOME}/.codex
+gemini       ${HOME}/.gemini
+openclaw     ${HOME}/.openclaw
+hermes-agent ${HOME}/.hermes-agent
 ```
 
 The generated command includes `--type`, so creating or updating an agent preserves the type metadata and backs up the matching runtime directories by default.
@@ -192,4 +192,4 @@ Before deploying, update:
 - `SQL_DSN`, if using MySQL
 - `STORAGE_DRIVER`
 - `AGFS_API_URL` and `AGFS_ROOT_PATH`, if using AGFS storage
-- `S3_*`, if using direct S3 storage
+- `S3_*` and `AWS_*`, if using direct S3 storage

@@ -43,6 +43,13 @@ async function validateManagedTags(userId: string, value: unknown): Promise<stri
   return [...new Set(tags)];
 }
 
+async function validateAgentType(userId: string, value: unknown): Promise<string> {
+  const type = String(value || 'workspace').trim();
+  const allowed = new Set((await db.getManagedAgentTypes(userId)).map((item) => item.name));
+  if (!allowed.has(type)) throw new Error(`Unknown type: ${type}`);
+  return type;
+}
+
 // ---- Agent CRUD ----
 
 router.get('/', requireAuth, asyncHandler(async (req, res) => {
@@ -69,16 +76,19 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
 
   const enabled = req.body.enabled === undefined ? true : req.body.enabled === 'true' || req.body.enabled === true;
   let selectedTags: string[] | undefined;
+  let selectedType: string;
   try {
     selectedTags = await validateManagedTags(userId, tags);
+    selectedType = await validateAgentType(userId, req.body.type);
   } catch (err) {
-    return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid tags' });
+    return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid agent metadata' });
   }
 
   // Create the agent record first to get an ID
   const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
   const agent = await db.createAgent(userId, {
     name,
+    type: selectedType,
     description: description || '',
     filename: req.file.originalname,
     fileSize: req.file.size,
@@ -103,6 +113,13 @@ router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (
 
   const patch: Partial<AgentConfig> = {};
   if (req.body.name !== undefined) patch.name = req.body.name;
+  if (req.body.type !== undefined) {
+    try {
+      patch.type = await validateAgentType((req as any).userId, req.body.type);
+    } catch (err) {
+      return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid type' });
+    }
+  }
   if (req.body.description !== undefined) patch.description = req.body.description;
   if (req.body.enabled !== undefined) patch.enabled = req.body.enabled === 'true' || req.body.enabled === true;
   if (req.body.isPublic !== undefined) patch.isPublic = req.body.isPublic === 'true' || req.body.isPublic === true;

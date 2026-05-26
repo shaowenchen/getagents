@@ -124,11 +124,13 @@ async function renderAuthenticated(renderPage) {
 // ---- Agent list + form rendering ----
 
 async function renderUserAgentsPage() {
-  const [agents, tagOptions] = await Promise.all([
+  const [agents, tagOptions, typeOptions] = await Promise.all([
     api('/agents', { admin: true }),
     api('/admin/tags', { admin: true }),
+    api('/admin/types', { admin: true }),
   ]);
   state.tagOptions = tagOptions;
+  state.typeOptions = typeOptions;
   const username = sessionStorage.getItem('admin_username') || 'User';
 
   render(`
@@ -159,11 +161,13 @@ async function renderUserAgentsPage() {
 }
 
 async function renderAdminDashboard() {
-  const [agents, tagOptions] = await Promise.all([
+  const [agents, tagOptions, typeOptions] = await Promise.all([
     api('/agents', { admin: true }),
     api('/admin/tags', { admin: true }),
+    api('/admin/types', { admin: true }),
   ]);
   state.tagOptions = tagOptions;
+  state.typeOptions = typeOptions;
   const username = sessionStorage.getItem('admin_username') || 'User';
 
   render(`
@@ -178,7 +182,7 @@ async function renderAdminDashboard() {
       </div>
     </div>
     ${renderAdminTabs(agents)}
-    ${state.adminTab === 'tags' ? renderTagManager() : renderAgentsAdminPanel(agents)}
+    ${state.adminTab === 'tags' ? renderTagManager() : state.adminTab === 'types' ? renderTypeManager() : renderAgentsAdminPanel(agents)}
   `);
 }
 
@@ -191,6 +195,9 @@ function renderAdminTabs(agents) {
       </button>
       <button class="admin-tab ${tab === 'tags' ? 'active' : ''}" onclick="setAdminTab('tags')">
         Tags
+      </button>
+      <button class="admin-tab ${tab === 'types' ? 'active' : ''}" onclick="setAdminTab('types')">
+        Types
       </button>
     </div>
   `;
@@ -209,7 +216,7 @@ function renderAgentsAdminPanel(agents) {
 }
 
 window.setAdminTab = async (tab) => {
-  state.adminTab = tab === 'tags' ? 'tags' : 'agents';
+  state.adminTab = ['agents', 'tags', 'types'].includes(tab) ? tab : 'agents';
   await renderAdminDashboard();
 };
 
@@ -224,6 +231,7 @@ function renderAgentsTable(agents) {
         <thead>
           <tr>
             <th>Name</th>
+            <th>Type</th>
             <th>Tags</th>
             <th>Status</th>
             <th>File</th>
@@ -239,6 +247,7 @@ function renderAgentsTable(agents) {
                 <strong>${escapeHtml(agent.name)}</strong>
                 <div class="text-small">${escapeHtml(truncate(agent.description || 'No description', 70))}</div>
               </td>
+              <td><span class="badge badge-muted">${escapeHtml(agentTypeLabel(agent.type))}</span></td>
               <td>
                 ${(agent.tags || []).length
                   ? `<div class="agent-tags">${(agent.tags || []).map(tag => `<span class="agent-tag">${escapeHtml(tag)}</span>`).join('')}</div>`
@@ -279,11 +288,42 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
-function buildCliCommand({ agentId, agentName, description, tags } = {}) {
+function normalizeAgentType(type) {
+  const options = state.typeOptions || [];
+  return options.some(option => option.name === type) ? type : (options[0]?.name || 'workspace');
+}
+
+function findAgentType(type) {
+  const value = normalizeAgentType(type);
+  return (state.typeOptions || []).find(item => item.name === value) || { name: value, backupDirs: ['$PWD'] };
+}
+
+function agentTypeLabel(type) {
+  return findAgentType(type).name;
+}
+
+function agentTypeSource(type) {
+  const dirs = findAgentType(type).backupDirs || [];
+  return dirs.length ? dirs.join(', ') : '$PWD';
+}
+
+function buildAgentTypeOptions(selected) {
+  const value = normalizeAgentType(selected);
+  return (state.typeOptions || []).map(option => `
+    <option value="${escapeHtml(option.name)}" ${option.name === value ? 'selected' : ''}>
+      ${escapeHtml(option.name)} (${escapeHtml((option.backupDirs || []).join(', ') || '$PWD')})
+    </option>
+  `).join('');
+}
+
+function buildCliCommand({ agentId, agentName, type, backupDirs, description, tags } = {}) {
   const base = buildCliBaseUrl();
   const apiKey = getAdminApiKey();
   const keyPart = apiKey ? `GETAGENTS_API_KEY=${apiKey} ` : 'GETAGENTS_API_KEY=<your-api-key> ';
   const args = [];
+  args.push('--type', shellQuote(normalizeAgentType(type)));
+  const dirs = backupDirs || findAgentType(type).backupDirs || [];
+  dirs.forEach(dir => args.push('--source', shellQuote(dir)));
   if (agentId) args.push('--agent-id', shellQuote(agentId));
   else if (agentName) args.push('--name', shellQuote(agentName));
   else args.push('--name', shellQuote('<agent-name>'));
@@ -365,6 +405,110 @@ window.deleteManagedTag = async (id) => {
   }
 };
 
+// ---- Managed agent types ----
+
+function parseDirsText(value) {
+  return String(value || '').split(/\r?\n|,/).map(dir => dir.trim()).filter(Boolean);
+}
+
+function renderTypeManager() {
+  const types = state.typeOptions || [];
+  return `
+    <div class="card" style="margin-bottom:1rem">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0">Types</h3>
+          <p class="text-muted" style="margin:0.25rem 0 0;font-size:0.85rem">Each type can define one or more directories for CLI backup.</p>
+        </div>
+        <div style="display:grid;gap:0.45rem;min-width:280px">
+          <input id="new-type-name" placeholder="Type name, e.g. cursor"
+            style="padding:0.45rem 0.6rem;border:1px solid var(--border-strong);border-radius:9px">
+          <textarea id="new-type-dirs" placeholder="Backup directories, one per line&#10;$HOME/.cursor"
+            style="padding:0.45rem 0.6rem;border:1px solid var(--border-strong);border-radius:9px;min-height:72px"></textarea>
+          <button class="btn-primary" onclick="addManagedType()">Add Type</button>
+        </div>
+      </div>
+    </div>
+    <div class="card admin-table-card">
+      ${types.length ? `
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Backup Directories</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${types.map(type => `
+                <tr>
+                  <td><strong>${escapeHtml(type.name)}</strong></td>
+                  <td>
+                    ${(type.backupDirs || []).length
+                      ? (type.backupDirs || []).map(dir => `<code style="display:inline-block;margin:0.12rem 0.25rem 0.12rem 0;padding:0.15rem 0.35rem;background:#f1f5f9;border-radius:6px">${escapeHtml(dir)}</code>`).join('')
+                      : '<span class="text-muted">-</span>'}
+                  </td>
+                  <td>
+                    <div class="agent-actions">
+                      <button class="btn-ghost" onclick="editManagedType('${type.id}')">Edit</button>
+                      <button class="btn-ghost btn-danger" onclick="deleteManagedType('${type.id}')">Delete</button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : '<div class="empty-state" style="padding:1.5rem">No types yet.</div>'}
+    </div>
+  `;
+}
+
+window.addManagedType = async () => {
+  const nameInput = document.getElementById('new-type-name');
+  const dirsInput = document.getElementById('new-type-dirs');
+  const name = nameInput?.value?.trim() || '';
+  const backupDirs = parseDirsText(dirsInput?.value || '');
+  if (!name) return alert('Type name is required');
+  if (!backupDirs.length) return alert('At least one backup directory is required');
+  try {
+    await api('/admin/types', { method: 'POST', body: { name, backupDirs }, admin: true });
+    if (nameInput) nameInput.value = '';
+    if (dirsInput) dirsInput.value = '';
+    await renderCurrentAuthenticatedPage();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+window.editManagedType = async (id) => {
+  const type = (state.typeOptions || []).find(item => item.id === id);
+  if (!type) return;
+  const name = prompt('Type name:', type.name);
+  if (name === null) return;
+  const dirsText = prompt('Backup directories, one per line:', (type.backupDirs || []).join('\n'));
+  if (dirsText === null) return;
+  const backupDirs = parseDirsText(dirsText);
+  if (!backupDirs.length) return alert('At least one backup directory is required');
+  try {
+    await api(`/admin/types/${id}`, { method: 'PUT', body: { name: name.trim(), backupDirs }, admin: true });
+    await renderCurrentAuthenticatedPage();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+window.deleteManagedType = async (id) => {
+  if (!confirm('Delete this type? Existing agents using it will be moved to workspace.')) return;
+  try {
+    await api(`/admin/types/${id}`, { method: 'DELETE', admin: true });
+    await renderCurrentAuthenticatedPage();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
 window.toggleAgentTag = (tagName) => {
   const current = Array.isArray(state.agentForm.tags) ? state.agentForm.tags : [];
   state.agentForm.tags = current.includes(tagName)
@@ -374,11 +518,12 @@ window.toggleAgentTag = (tagName) => {
 };
 
 function buildAgentFormCliCommand() {
-  if (state.editingAgent) return buildCliCommand({ agentId: state.editingAgent });
+  const type = normalizeAgentType(state.agentForm.type);
+  if (state.editingAgent) return buildCliCommand({ agentId: state.editingAgent, type });
   const name = String(state.agentForm.name || '').trim();
   const description = String(state.agentForm.description || '').trim();
   const tags = Array.isArray(state.agentForm.tags) ? state.agentForm.tags : [];
-  return buildCliCommand({ agentName: name, description, tags });
+  return buildCliCommand({ agentName: name, type, description, tags });
 }
 
 function hasRequiredAgentFormInfo() {
@@ -411,8 +556,8 @@ function renderAgentFormCliCommandContent() {
     <div class="cli-step-label">${isEditing ? 'Update from CLI' : 'Upload from CLI'}</div>
     <p class="text-muted" style="margin:0 0 0.5rem;font-size:0.82rem">
       ${isEditing
-        ? 'Run this in the agent working directory to upload a new version.'
-        : 'Run this in the agent working directory to create or update by name.'}
+        ? `Run this in the agent runtime environment to upload ${escapeHtml(agentTypeLabel(state.agentForm.type))} files from ${escapeHtml(agentTypeSource(state.agentForm.type))}.`
+        : `Run this in the agent runtime environment to upload ${escapeHtml(agentTypeLabel(state.agentForm.type))} files from ${escapeHtml(agentTypeSource(state.agentForm.type))}.`}
     </p>
     ${apiKey ? '' : `
       <div style="margin-bottom:0.5rem;padding:0.5rem 0.6rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;color:#9a3412;font-size:0.8rem">
@@ -443,6 +588,13 @@ function renderAgentForm() {
         <label class="field">
           <span class="field-label">Name<span class="field-required">*</span></span>
           <input data-agent-field="name" placeholder="e.g. My Assistant" value="${escapeHtml(f.name)}" oninput="agentForm.name=this.value; updateAgentFormCliCommand()">
+        </label>
+        <label class="field">
+          <span class="field-label">Type<span class="field-required">*</span></span>
+          <select data-agent-field="type" onchange="agentForm.type=this.value; updateAgentFormCliCommand()"
+            style="padding:0.55rem 0.65rem;border:1px solid var(--border-strong);border-radius:9px;background:white">
+            ${buildAgentTypeOptions(f.type)}
+          </select>
         </label>
         <label class="field">
           <span class="field-label">Description<span class="field-required">*</span></span>
@@ -498,6 +650,7 @@ function renderAgentCard(agent) {
         <div class="agent-main">
           <div class="agent-title-row">
             <span class="agent-name">${name}</span>
+            <span class="badge badge-muted">${escapeHtml(agentTypeLabel(agent.type))}</span>
             ${agent.enabled ? '<span class="badge badge-success">ENABLED</span>' : '<span class="badge badge-muted">DISABLED</span>'}
             ${agent.isPublic ? '<span class="badge" style="background:#8b5cf6">PUBLIC</span>' : ''}
             ${agent.shareToken ? '<span class="badge" style="background:#f59e0b">SHARED</span>' : ''}
@@ -568,6 +721,7 @@ window.editAgent = async (id) => {
   state.agentFormFile = null;
   state.agentForm = {
     name: a.name,
+    type: normalizeAgentType(a.type),
     description: a.description,
     enabled: a.enabled,
     tags: a.tags || [],
@@ -580,6 +734,7 @@ window.saveAgent = async () => {
   syncAgentFormFromInputs();
   const formData = new FormData();
   formData.append('name', state.agentForm.name);
+  formData.append('type', normalizeAgentType(state.agentForm.type));
   formData.append('description', state.agentForm.description);
   formData.append('enabled', state.agentForm.enabled);
   formData.append('isPublic', state.agentForm.isPublic);
@@ -770,4 +925,4 @@ window.navigateTo = (path) => {
   navigate(path);
 };
 
-export { renderAdmin, renderUserAgents, toast, buildCliCommand, buildCliBaseUrl };
+export { renderAdmin, renderUserAgents, toast, buildCliCommand, buildCliBaseUrl, agentTypeLabel, agentTypeSource };

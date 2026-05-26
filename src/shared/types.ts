@@ -4,6 +4,7 @@ export interface AgentConfig {
   id: string;
   userId: string;
   name: string;
+  type: string;
   avatar?: string;
   description: string;
   filename: string;
@@ -31,6 +32,7 @@ export interface AgentVersion {
 
 export interface AgentSnapshot {
   name: string;
+  type?: string;
   description: string;
   filename: string;
   fileSize: number;
@@ -41,6 +43,7 @@ export interface AgentSnapshot {
 
 export interface CreateAgentRequest {
   name: string;
+  type?: string;
   description: string;
   tags?: string[];
   avatar?: string;
@@ -62,5 +65,13 @@ export interface ManagedTag {
   id: string;
   userId: string;
   name: string;
+  createdAt: number;
+}
+
+export interface ManagedAgentType {
+  id: string;
+  userId: string;
+  name: string;
+  backupDirs: string[];
   createdAt: number;
 }

@@ -3,7 +3,7 @@ import { dirname } from 'path';
 import { homedir } from 'os';
 import { mkdirSync } from 'fs';
 import { v4 as uuid } from 'uuid';
-import type { AgentConfig, AgentVersion, AgentSnapshot, ManagedTag, User } from '../shared/types.js';
+import type { AgentConfig, AgentVersion, AgentSnapshot, ManagedAgentType, ManagedTag, User } from '../shared/types.js';
 import { deleteAgentFiles } from '../utils/fileStore.js';
 
 const databasePath = `${homedir()}/.getagents/getagents.sqlite`;
@@ -18,6 +18,7 @@ db.pragma('journal_mode = WAL');
 db.exec(`DROP TABLE IF EXISTS agent_imports`);
 db.exec(`DROP TABLE IF EXISTS agent_versions`);
 db.exec(`DROP TABLE IF EXISTS agents`);
+db.exec(`DROP TABLE IF EXISTS managed_agent_types`);
 db.exec(`DROP TABLE IF EXISTS managed_tags`);
 db.exec(`DROP TABLE IF EXISTS users`);
 
@@ -39,12 +40,23 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE managed_agent_types (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    backup_dirs_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(user_id, name),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE agents (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
     avatar TEXT,
     description TEXT NOT NULL,
+    agent_type TEXT NOT NULL DEFAULT 'workspace',
     filename TEXT NOT NULL,
     file_size INTEGER NOT NULL DEFAULT 0,
     file_hash TEXT NOT NULL,
@@ -87,6 +99,7 @@ function rowToAgent(row: Record<string, unknown>): AgentConfig {
     id: row.id as string,
     userId: row.user_id as string,
     name: row.name as string,
+    type: (row.agent_type as AgentConfig['type']) || 'workspace',
     avatar: (row.avatar as string) || undefined,
     description: row.description as string,
     filename: row.filename as string,
@@ -107,6 +120,7 @@ function rowToAgent(row: Record<string, unknown>): AgentConfig {
 function agentToRow(agent: Partial<AgentConfig>): Record<string, unknown> {
   const row: Record<string, unknown> = {};
   if (agent.name !== undefined) row.name = agent.name;
+  if (agent.type !== undefined) row.agent_type = agent.type;
   if (agent.avatar !== undefined) row.avatar = agent.avatar;
   if (agent.description !== undefined) row.description = agent.description;
   if (agent.filename !== undefined) row.filename = agent.filename;
@@ -147,6 +161,38 @@ function rowToManagedTag(row: Record<string, unknown>): ManagedTag {
   };
 }
 
+function rowToManagedAgentType(row: Record<string, unknown>): ManagedAgentType {
+  return {
+    id: row.id as string,
+    userId: row.user_id as string,
+    name: row.name as string,
+    backupDirs: tryParseJson(row.backup_dirs_json as string) || [],
+    createdAt: Number(row.created_at),
+  };
+}
+
+const defaultAgentTypes = [
+  { name: 'workspace', backupDirs: ['$PWD'] },
+  { name: 'cursor', backupDirs: ['$HOME/.cursor'] },
+  { name: 'claude', backupDirs: ['$HOME/.claude'] },
+  { name: 'codex', backupDirs: ['$HOME/.codex'] },
+  { name: 'gemini', backupDirs: ['$HOME/.gemini'] },
+  { name: 'openclaw', backupDirs: ['$HOME/.openclaw'] },
+  { name: 'hermes-agent', backupDirs: ['$HOME/.hermes-agent'] },
+];
+
+function normalizeBackupDirs(value: string[]): string[] {
+  return [...new Set(value.map(dir => String(dir).trim()).filter(Boolean))];
+}
+
+async function seedDefaultAgentTypes(userId: string): Promise<void> {
+  const now = Date.now();
+  const insert = db.prepare('INSERT OR IGNORE INTO managed_agent_types (id, user_id, name, backup_dirs_json, created_at) VALUES (?,?,?,?,?)');
+  for (const type of defaultAgentTypes) {
+    insert.run(uuid(), userId, type.name, JSON.stringify(type.backupDirs), now);
+  }
+}
+
 export async function createUser(username: string, passwordHash: string): Promise<User> {
   const id = uuid();
   const now = Date.now();
@@ -176,6 +222,12 @@ export async function getAllUsers(): Promise<(User & { passwordHash: string })[]
     const r = row as Record<string, unknown>;
     return { id: r.id as string, username: r.username as string, passwordHash: r.password_hash as string, createdAt: Number(r.created_at) };
   });
+}
+
+export async function updateUserPasswordHash(userId: string, passwordHash: string): Promise<boolean> {
+  const result = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?')
+    .run(passwordHash, Date.now(), userId);
+  return result.changes > 0;
 }
 
 // ---- Managed Tags ----
@@ -221,6 +273,55 @@ export async function deleteManagedTag(userId: string, tagId: string): Promise<b
   return result.changes > 0;
 }
 
+// ---- Managed Agent Types ----
+
+export async function getManagedAgentTypes(userId: string): Promise<ManagedAgentType[]> {
+  let rows = db.prepare('SELECT * FROM managed_agent_types WHERE user_id = ? ORDER BY created_at ASC').all(userId) as Record<string, unknown>[];
+  if (!rows.length) {
+    await seedDefaultAgentTypes(userId);
+    rows = db.prepare('SELECT * FROM managed_agent_types WHERE user_id = ? ORDER BY created_at ASC').all(userId) as Record<string, unknown>[];
+  }
+  return rows.map(rowToManagedAgentType);
+}
+
+export async function createManagedAgentType(userId: string, name: string, backupDirs: string[]): Promise<ManagedAgentType> {
+  const id = uuid();
+  const now = Date.now();
+  const dirs = normalizeBackupDirs(backupDirs);
+  db.prepare('INSERT INTO managed_agent_types (id, user_id, name, backup_dirs_json, created_at) VALUES (?,?,?,?,?)')
+    .run(id, userId, name, JSON.stringify(dirs), now);
+  return { id, userId, name, backupDirs: dirs, createdAt: now };
+}
+
+export async function updateManagedAgentType(userId: string, typeId: string, input: { name?: string; backupDirs?: string[] }): Promise<ManagedAgentType | undefined> {
+  const existing = db.prepare('SELECT * FROM managed_agent_types WHERE id = ? AND user_id = ?').get(typeId, userId) as Record<string, unknown> | undefined;
+  if (!existing) return undefined;
+
+  const nextName = input.name ?? existing.name as string;
+  const nextDirs = input.backupDirs ? normalizeBackupDirs(input.backupDirs) : (tryParseJson(existing.backup_dirs_json as string) || []);
+  db.prepare('UPDATE managed_agent_types SET name = ?, backup_dirs_json = ? WHERE id = ? AND user_id = ?')
+    .run(nextName, JSON.stringify(nextDirs), typeId, userId);
+
+  if (input.name && input.name !== existing.name) {
+    db.prepare('UPDATE agents SET agent_type = ?, updated_at = ? WHERE user_id = ? AND agent_type = ?')
+      .run(input.name, Date.now(), userId, existing.name);
+  }
+
+  return { id: typeId, userId, name: nextName, backupDirs: nextDirs, createdAt: Number(existing.created_at) };
+}
+
+export async function deleteManagedAgentType(userId: string, typeId: string): Promise<boolean> {
+  const type = db.prepare('SELECT * FROM managed_agent_types WHERE id = ? AND user_id = ?').get(typeId, userId) as Record<string, unknown> | undefined;
+  if (!type) return false;
+
+  const result = db.prepare('DELETE FROM managed_agent_types WHERE id = ? AND user_id = ?').run(typeId, userId);
+  if (result.changes > 0) {
+    db.prepare('UPDATE agents SET agent_type = ?, updated_at = ? WHERE user_id = ? AND agent_type = ?')
+      .run('workspace', Date.now(), userId, type.name);
+  }
+  return result.changes > 0;
+}
+
 // ---- Agents ----
 
 export async function getAllAgents(userId?: string): Promise<AgentConfig[]> {
@@ -242,6 +343,7 @@ export async function createAgent(userId: string, data: Partial<AgentConfig> & {
     id,
     userId,
     name: data.name || '',
+    type: data.type || 'workspace',
     description: data.description || '',
     filename: data.filename,
     fileSize: data.fileSize,
@@ -254,8 +356,8 @@ export async function createAgent(userId: string, data: Partial<AgentConfig> & {
     createdAt: now,
     updatedAt: now,
   };
-  const insert = db.prepare(`INSERT INTO agents (id,user_id,name,avatar,description,filename,file_size,file_hash,enabled,is_public,tags_json,download_count,likes_count,share_token,share_password,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  insert.run(agent.id, agent.userId, agent.name, null, agent.description, agent.filename, agent.fileSize, agent.fileHash, agent.enabled ? 1 : 0, agent.isPublic ? 1 : 0, JSON.stringify(agent.tags || []), agent.downloadCount, agent.likesCount, null, null, agent.createdAt, agent.updatedAt);
+  const insert = db.prepare(`INSERT INTO agents (id,user_id,name,agent_type,avatar,description,filename,file_size,file_hash,enabled,is_public,tags_json,download_count,likes_count,share_token,share_password,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  insert.run(agent.id, agent.userId, agent.name, agent.type, null, agent.description, agent.filename, agent.fileSize, agent.fileHash, agent.enabled ? 1 : 0, agent.isPublic ? 1 : 0, JSON.stringify(agent.tags || []), agent.downloadCount, agent.likesCount, null, null, agent.createdAt, agent.updatedAt);
   return agent;
 }
 
@@ -272,7 +374,7 @@ export async function updateAgent(id: string, data: Partial<AgentConfig>): Promi
   }
 
   // Auto-create version snapshot on meaningful changes
-  if (data.name !== undefined || data.description !== undefined || data.filename !== undefined || data.tags !== undefined) {
+  if (data.name !== undefined || data.type !== undefined || data.description !== undefined || data.filename !== undefined || data.tags !== undefined) {
     await createVersion(id, 'Update');
   }
 
@@ -303,6 +405,7 @@ function rowToVersion(row: Record<string, unknown>): AgentVersion {
 function agentSnapshotFields(agent: AgentConfig): Record<string, unknown> {
   return {
     name: agent.name,
+    type: agent.type,
     description: agent.description,
     filename: agent.filename,
     fileSize: agent.fileSize,

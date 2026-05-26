@@ -41,7 +41,7 @@ ADMIN_API_KEY=user-admin-api-key-change-me
 
 - `URI_PREFIX` is the mounted app path.
 - `ACCESS_URL` is the public URL used when generating download links and CLI upload commands.
-- `ADMIN_API_KEY` creates or unlocks the built-in `admin` user.
+- `ADMIN_API_KEY` creates or unlocks the built-in `admin` user. If unset, it defaults to `user-admin-api-key-change-me`.
 - `MAX_UPLOAD_MB` controls ZIP upload size.
 
 ## Databases
@@ -148,11 +148,26 @@ Example:
 
 ```bash
 GETAGENTS_API_KEY=user-xxx bash <(curl -fsSL http://localhost:3000/getagents/cli/upload.sh) \
+  --type workspace \
   --name 'My Agent' \
   --description 'What this agent does'
 ```
 
-The script compresses the current working directory and uploads it as a ZIP package.
+Agent types are managed from the Admin page. Each type can define one or more backup directories, and the generated command includes one `--source` argument per configured directory. You can still override the command manually with your own `--source` values.
+
+Default type presets are created for each user:
+
+```text
+workspace  $PWD
+cursor     $HOME/.cursor
+claude     $HOME/.claude
+codex      $HOME/.codex
+gemini     $HOME/.gemini
+openclaw   $HOME/.openclaw
+hermes-agent $HOME/.hermes-agent
+```
+
+The generated command includes `--type`, so creating or updating an agent preserves the type metadata and backs up the matching runtime directories by default.
 
 ## Kubernetes Deployment
 

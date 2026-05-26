@@ -23,6 +23,7 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const URI_PREFIX = normalizeRoutePrefix(process.env.URI_PREFIX || '/getagents');
 const ACCESS_URL = getConfiguredAccessUrl();
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'user-admin-api-key-change-me';
 const publicDir = join(__dirname, 'public');
 const indexHtmlPath = join(publicDir, 'index.html');
 const indexHtmlCached = readFileSync(indexHtmlPath, 'utf8');
@@ -104,17 +105,13 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
 
 app.listen(Number(PORT), HOST, async () => {
   // Ensure admin user exists from ADMIN_API_KEY env var
-  if (process.env.ADMIN_API_KEY) {
-    try {
-      const admin = await ensureAdminUser(process.env.ADMIN_API_KEY);
-      log.info('Admin user ready', { username: admin.username });
-    } catch (err) {
-      log.error('Failed to ensure admin user', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  } else {
-    log.warn('ADMIN_API_KEY not set, admin user not initialized');
+  try {
+    const admin = await ensureAdminUser(ADMIN_API_KEY);
+    log.info('Admin user ready', { username: admin.username, usingDefaultAdminApiKey: !process.env.ADMIN_API_KEY });
+  } catch (err) {
+    log.error('Failed to ensure admin user', {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   log.info('GetAgents started', {

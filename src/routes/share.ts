@@ -38,6 +38,7 @@ router.post('/:token/install', requireAuth, asyncHandler(async (req, res) => {
   // Create copy
   const newAgent = await db.createAgent(userId, {
     name: agent.name,
+    type: agent.type,
     description: agent.description,
     filename: agent.filename,
     fileSize: agent.fileSize,

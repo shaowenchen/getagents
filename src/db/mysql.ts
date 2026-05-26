@@ -1,6 +1,6 @@
 import mysql, { type Pool, type PoolOptions, type RowDataPacket, type ResultSetHeader } from 'mysql2/promise';
 import { v4 as uuid } from 'uuid';
-import type { AgentConfig, AgentVersion, AgentSnapshot, ManagedTag, User } from '../shared/types.js';
+import type { AgentConfig, AgentVersion, AgentSnapshot, ManagedAgentType, ManagedTag, User } from '../shared/types.js';
 import { deleteAgentFiles } from '../utils/fileStore.js';
 
 const dsn = process.env.SQL_DSN;
@@ -23,6 +23,7 @@ async function init(): Promise<void> {
   await db.query(`DROP TABLE IF EXISTS agent_imports`);
   await db.query(`DROP TABLE IF EXISTS agent_versions`);
   await db.query(`DROP TABLE IF EXISTS agents`);
+  await db.query(`DROP TABLE IF EXISTS managed_agent_types`);
   await db.query(`DROP TABLE IF EXISTS managed_tags`);
   await db.query(`DROP TABLE IF EXISTS users`);
 
@@ -48,10 +49,23 @@ async function init(): Promise<void> {
   `);
 
   await db.query(`
+    CREATE TABLE managed_agent_types (
+      id VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      name VARCHAR(64) NOT NULL,
+      backup_dirs_json JSON NOT NULL,
+      created_at BIGINT NOT NULL,
+      UNIQUE KEY uniq_managed_agent_types_user_name (user_id, name),
+      CONSTRAINT fk_managed_agent_types_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  await db.query(`
     CREATE TABLE agents (
       id VARCHAR(64) PRIMARY KEY,
       user_id VARCHAR(64) NOT NULL,
       name VARCHAR(255) NOT NULL,
+      agent_type VARCHAR(32) NOT NULL DEFAULT 'workspace',
       avatar TEXT,
       description TEXT NOT NULL,
       filename TEXT NOT NULL,
@@ -136,7 +150,7 @@ function parseDsn(value: string): PoolOptions {
 }
 
 type AgentRow = RowDataPacket & {
-  id: string; user_id: string; name: string; avatar: string | null; description: string;
+  id: string; user_id: string; name: string; agent_type: string; avatar: string | null; description: string;
   filename: string; file_size: number; file_hash: string;
   enabled: number; is_public: number; tags_json: string | null;
   download_count: number; likes_count: number;
@@ -150,6 +164,10 @@ type UserRow = RowDataPacket & {
 
 type ManagedTagRow = RowDataPacket & {
   id: string; user_id: string; name: string; created_at: number;
+};
+
+type ManagedAgentTypeRow = RowDataPacket & {
+  id: string; user_id: string; name: string; backup_dirs_json: string; created_at: number;
 };
 
 type VersionRow = RowDataPacket & {
@@ -170,6 +188,7 @@ function stringifyOptional(value: unknown): string | null {
 function toAgent(row: AgentRow): AgentConfig {
   return {
     id: row.id, userId: row.user_id, name: row.name, avatar: row.avatar ?? undefined,
+    type: (row.agent_type as AgentConfig['type']) || 'workspace',
     description: row.description, filename: row.filename,
     fileSize: Number(row.file_size || 0), fileHash: row.file_hash,
     enabled: Boolean(row.enabled),
@@ -192,9 +211,45 @@ function toVersion(row: VersionRow): AgentVersion {
   };
 }
 
+function toManagedAgentType(row: ManagedAgentTypeRow): ManagedAgentType {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    backupDirs: parseJson<string[]>(row.backup_dirs_json, []),
+    createdAt: Number(row.created_at),
+  };
+}
+
+const defaultAgentTypes = [
+  { name: 'workspace', backupDirs: ['$PWD'] },
+  { name: 'cursor', backupDirs: ['$HOME/.cursor'] },
+  { name: 'claude', backupDirs: ['$HOME/.claude'] },
+  { name: 'codex', backupDirs: ['$HOME/.codex'] },
+  { name: 'gemini', backupDirs: ['$HOME/.gemini'] },
+  { name: 'openclaw', backupDirs: ['$HOME/.openclaw'] },
+  { name: 'hermes-agent', backupDirs: ['$HOME/.hermes-agent'] },
+];
+
+function normalizeBackupDirs(value: string[]): string[] {
+  return [...new Set(value.map(dir => String(dir).trim()).filter(Boolean))];
+}
+
+async function seedDefaultAgentTypes(userId: string): Promise<void> {
+  const db = requirePool();
+  const now = Date.now();
+  for (const type of defaultAgentTypes) {
+    await db.execute(
+      'INSERT IGNORE INTO managed_agent_types (id, user_id, name, backup_dirs_json, created_at) VALUES (?,?,?,?,?)',
+      [uuid(), userId, type.name, JSON.stringify(type.backupDirs), now]
+    );
+  }
+}
+
 function agentSnapshotFields(agent: AgentConfig): Record<string, unknown> {
   return {
     name: agent.name,
+    type: agent.type,
     description: agent.description,
     filename: agent.filename,
     fileSize: agent.fileSize,
@@ -209,12 +264,12 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
   const db = requirePool();
   await db.execute(`
     INSERT INTO agents (
-      id, user_id, name, avatar, description, filename, file_size, file_hash,
+      id, user_id, name, agent_type, avatar, description, filename, file_size, file_hash,
       enabled, is_public, tags_json, download_count, likes_count,
       share_token, share_password, created_at, updated_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON DUPLICATE KEY UPDATE
-      name=VALUES(name), avatar=VALUES(avatar), description=VALUES(description),
+      name=VALUES(name), agent_type=VALUES(agent_type), avatar=VALUES(avatar), description=VALUES(description),
       filename=VALUES(filename), file_size=VALUES(file_size), file_hash=VALUES(file_hash),
       enabled=VALUES(enabled), is_public=VALUES(is_public),
       tags_json=VALUES(tags_json),
@@ -222,7 +277,7 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
       share_token=VALUES(share_token), share_password=VALUES(share_password),
       updated_at=VALUES(updated_at)
   `, [
-    agent.id, agent.userId, agent.name, agent.avatar ?? null, agent.description,
+    agent.id, agent.userId, agent.name, agent.type, agent.avatar ?? null, agent.description,
     agent.filename, agent.fileSize, agent.fileHash,
     agent.enabled ? 1 : 0, agent.isPublic ? 1 : 0,
     stringifyOptional(agent.tags),
@@ -274,6 +329,16 @@ export async function getAllUsers(): Promise<(User & { passwordHash: string })[]
   return rows.map(r => ({
     id: r.id, username: r.username, passwordHash: r.password_hash, createdAt: Number(r.created_at),
   }));
+}
+
+export async function updateUserPasswordHash(userId: string, passwordHash: string): Promise<boolean> {
+  await ensureReady();
+  const db = requirePool();
+  const [result] = await db.execute<ResultSetHeader>(
+    'UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?',
+    [passwordHash, Date.now(), userId]
+  );
+  return result.affectedRows > 0;
 }
 
 // ---- Managed Tags ----
@@ -343,6 +408,88 @@ export async function deleteManagedTag(userId: string, tagId: string): Promise<b
   return result.affectedRows > 0;
 }
 
+// ---- Managed Agent Types ----
+
+export async function getManagedAgentTypes(userId: string): Promise<ManagedAgentType[]> {
+  await ensureReady();
+  const db = requirePool();
+  let [rows] = await db.execute<ManagedAgentTypeRow[]>(
+    'SELECT * FROM managed_agent_types WHERE user_id = ? ORDER BY created_at ASC',
+    [userId]
+  );
+  if (!rows.length) {
+    await seedDefaultAgentTypes(userId);
+    [rows] = await db.execute<ManagedAgentTypeRow[]>(
+      'SELECT * FROM managed_agent_types WHERE user_id = ? ORDER BY created_at ASC',
+      [userId]
+    );
+  }
+  return rows.map(toManagedAgentType);
+}
+
+export async function createManagedAgentType(userId: string, name: string, backupDirs: string[]): Promise<ManagedAgentType> {
+  await ensureReady();
+  const db = requirePool();
+  const id = uuid();
+  const now = Date.now();
+  const dirs = normalizeBackupDirs(backupDirs);
+  await db.execute(
+    'INSERT INTO managed_agent_types (id,user_id,name,backup_dirs_json,created_at) VALUES (?,?,?,?,?)',
+    [id, userId, name, JSON.stringify(dirs), now]
+  );
+  return { id, userId, name, backupDirs: dirs, createdAt: now };
+}
+
+export async function updateManagedAgentType(userId: string, typeId: string, input: { name?: string; backupDirs?: string[] }): Promise<ManagedAgentType | undefined> {
+  await ensureReady();
+  const db = requirePool();
+  const [rows] = await db.execute<ManagedAgentTypeRow[]>(
+    'SELECT * FROM managed_agent_types WHERE id = ? AND user_id = ?',
+    [typeId, userId]
+  );
+  const existing = rows[0];
+  if (!existing) return undefined;
+
+  const nextName = input.name ?? existing.name;
+  const nextDirs = input.backupDirs ? normalizeBackupDirs(input.backupDirs) : parseJson<string[]>(existing.backup_dirs_json, []);
+  await db.execute(
+    'UPDATE managed_agent_types SET name = ?, backup_dirs_json = ? WHERE id = ? AND user_id = ?',
+    [nextName, JSON.stringify(nextDirs), typeId, userId]
+  );
+
+  if (input.name && input.name !== existing.name) {
+    await db.execute(
+      'UPDATE agents SET agent_type = ?, updated_at = ? WHERE user_id = ? AND agent_type = ?',
+      [input.name, Date.now(), userId, existing.name]
+    );
+  }
+
+  return { id: typeId, userId, name: nextName, backupDirs: nextDirs, createdAt: Number(existing.created_at) };
+}
+
+export async function deleteManagedAgentType(userId: string, typeId: string): Promise<boolean> {
+  await ensureReady();
+  const db = requirePool();
+  const [rows] = await db.execute<ManagedAgentTypeRow[]>(
+    'SELECT * FROM managed_agent_types WHERE id = ? AND user_id = ?',
+    [typeId, userId]
+  );
+  const type = rows[0];
+  if (!type) return false;
+
+  const [result] = await db.execute<ResultSetHeader>(
+    'DELETE FROM managed_agent_types WHERE id = ? AND user_id = ?',
+    [typeId, userId]
+  );
+  if (result.affectedRows > 0) {
+    await db.execute(
+      'UPDATE agents SET agent_type = ?, updated_at = ? WHERE user_id = ? AND agent_type = ?',
+      ['workspace', Date.now(), userId, type.name]
+    );
+  }
+  return result.affectedRows > 0;
+}
+
 // ---- Agents ----
 
 export async function getAllAgents(userId?: string): Promise<AgentConfig[]> {
@@ -369,6 +516,7 @@ export async function createAgent(userId: string, input: Partial<AgentConfig> & 
     id: uuid(),
     userId,
     name: input.name || '',
+    type: input.type || 'workspace',
     description: input.description || '',
     filename: input.filename,
     fileSize: input.fileSize,
@@ -398,7 +546,7 @@ export async function updateAgent(id: string, input: Partial<AgentConfig>): Prom
   };
 
   const meaningfulChange = input.name !== undefined || input.description !== undefined
-    || input.filename !== undefined || input.tags !== undefined;
+    || input.type !== undefined || input.filename !== undefined || input.tags !== undefined;
   if (meaningfulChange) await createVersion(id, 'Update');
 
   await saveAgent(updated);

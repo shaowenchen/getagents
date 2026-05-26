@@ -9,6 +9,7 @@ const state = {
   editingAgent: null,
   showAgentForm: false,
   tagOptions: [],
+  typeOptions: [],
   agentForm: createAgentForm(),
   agentFormFile: null,
 
@@ -29,6 +30,7 @@ const state = {
 function createAgentForm() {
   return {
     name: '',
+    type: 'workspace',
     description: '',
     enabled: true,
     tags: [],

@@ -2,17 +2,19 @@ import { escapeHtml, agentInitial, truncate, avatarColor, formatDateShort } from
 import { api, getAdminApiKey, publicUrl } from './api.js';
 import { render, navigate } from './router.js';
 import { state } from './state.js';
-import { toast, buildCliCommand, buildCliBaseUrl } from './admin.js';
+import { toast, buildCliCommand, buildCliBaseUrl, agentTypeLabel, agentTypeSource } from './admin.js';
 
 async function renderAgentDetail(agentId) {
   state.detailAgentId = agentId;
   try {
-    const [agent, versions] = await Promise.all([
+    const [agent, versions, typeOptions] = await Promise.all([
       api(`/agents/${agentId}`, { admin: true }),
       api(`/agents/${agentId}/versions`, { admin: true }),
+      api('/admin/types', { admin: true }),
     ]);
 
     state.detailVersions = versions;
+    state.typeOptions = typeOptions;
     const color = avatarColor(agent.name);
     const initial = agentInitial(agent);
     const tags = (agent.tags || []).map(t => `<span class="agent-tag">${escapeHtml(t)}</span>`).join('');
@@ -35,6 +37,7 @@ async function renderAgentDetail(agentId) {
             ${tags ? `<div class="agent-tags" style="margin:0.5rem 0">${tags}</div>` : ''}
             <div class="agent-meta" style="margin-top:0.5rem">
               <span class="agent-chip">File: ${escapeHtml(truncate(agent.filename || 'N/A', 50))}</span>
+              <span class="agent-chip">Type: ${escapeHtml(agentTypeLabel(agent.type))}</span>
               <span class="agent-chip">Size: ${formatFileSize(agent.fileSize || 0)}</span>
               <span class="agent-chip">SHA-256: ${escapeHtml(truncate(agent.fileHash || '', 16))}</span>
               <span class="agent-chip">Created: ${formatDateShort(agent.createdAt)}</span>
@@ -88,15 +91,15 @@ async function renderAgentDetail(agentId) {
 function renderAgentCliPanel(agent) {
   const apiKey = getAdminApiKey();
   const base = buildCliBaseUrl();
-  const cmd = buildCliCommand({ agentId: agent.id });
+  const cmd = buildCliCommand({ agentId: agent.id, type: agent.type });
   return `
     <div class="card cli-panel" style="margin-bottom:1rem">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem;flex-wrap:wrap">
         <div>
           <h3 style="margin:0">Update from CLI</h3>
           <p class="text-muted" style="margin:0.2rem 0 0;font-size:0.85rem">
-            Run this in the agent's working directory to create a new version of
-            <strong>${escapeHtml(agent.name)}</strong>.
+            Run this in the agent runtime environment to upload ${escapeHtml(agentTypeLabel(agent.type))}
+            files from ${escapeHtml(agentTypeSource(agent.type))} for <strong>${escapeHtml(agent.name)}</strong>.
           </p>
         </div>
       </div>

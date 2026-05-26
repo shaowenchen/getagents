@@ -18,13 +18,16 @@ export const UPLOAD_SCRIPT_TEMPLATE = `#!/usr/bin/env bash
 # Environment variables (all overridable by flags):
 #   GETAGENTS_ENDPOINT   Server base URL (defaults to where this script came from)
 #   GETAGENTS_API_KEY    API key from the GetAgents admin page (required)
-#   GETAGENTS_SOURCE     Directory to upload (defaults to current working dir)
+#   GETAGENTS_TYPE       Agent type metadata
+#   GETAGENTS_SOURCE     Directory to upload (repeat --source for multiple dirs)
 
 set -euo pipefail
 
 ENDPOINT="\${GETAGENTS_ENDPOINT:-__ENDPOINT__}"
 API_KEY="\${GETAGENTS_API_KEY:-}"
-SOURCE_DIR="\${GETAGENTS_SOURCE:-$PWD}"
+AGENT_TYPE="\${GETAGENTS_TYPE:-workspace}"
+SOURCE_DIRS=()
+[[ -n "\${GETAGENTS_SOURCE:-}" ]] && SOURCE_DIRS+=("\$GETAGENTS_SOURCE")
 AGENT_ID=""
 AGENT_NAME=""
 DESCRIPTION=""
@@ -39,7 +42,8 @@ Usage: bash upload.sh [options]
 
   -e, --endpoint URL       Server base URL (env GETAGENTS_ENDPOINT)
   -k, --api-key KEY        API key (env GETAGENTS_API_KEY)
-  -s, --source DIR         Directory to upload (default: \$PWD)
+      --type TYPE          Agent type metadata
+  -s, --source DIR         Directory to upload (can be repeated)
   -i, --agent-id ID        Update an existing agent by ID
   -n, --name NAME          Agent name (used for create-or-update by name)
   -d, --description TEXT   Description (only applied on create / when provided)
@@ -59,6 +63,10 @@ Examples:
   # Upload a different directory
   bash upload.sh --name "Helper" --source ./my-agent
 
+When multiple --source values are provided, each directory is stored under its
+basename inside the ZIP. Shell-style \$HOME, \${HOME}, \$PWD, \${PWD}, and ~
+prefixes are expanded by the script.
+
 EOF
 }
 
@@ -66,7 +74,8 @@ while [[ \$# -gt 0 ]]; do
   case "\$1" in
     -e|--endpoint)     ENDPOINT="\${2:-}"; shift 2 ;;
     -k|--api-key)      API_KEY="\${2:-}"; shift 2 ;;
-    -s|--source)       SOURCE_DIR="\${2:-}"; shift 2 ;;
+    --type)            AGENT_TYPE="\${2:-}"; shift 2 ;;
+    -s|--source)       SOURCE_DIRS+=("\${2:-}"); shift 2 ;;
     -i|--agent-id)     AGENT_ID="\${2:-}"; shift 2 ;;
     -n|--name)         AGENT_NAME="\${2:-}"; shift 2 ;;
     -d|--description)  DESCRIPTION="\${2:-}"; shift 2 ;;
@@ -82,12 +91,39 @@ done
 err() { echo "[getagents] \$*" >&2; }
 info() { echo "[getagents] \$*"; }
 
+expand_source_path() {
+  local path="\$1"
+  case "\$path" in
+    "~") printf '%s\\n' "\$HOME" ;;
+    "~/"*) printf '%s/%s\\n' "\$HOME" "\${path#~/}" ;;
+    "\\\$HOME") printf '%s\\n' "\$HOME" ;;
+    "\\\$HOME/"*) printf '%s/%s\\n' "\$HOME" "\${path#\\\$HOME/}" ;;
+    "\\\${HOME}") printf '%s\\n' "\$HOME" ;;
+    "\\\${HOME}/"*) printf '%s/%s\\n' "\$HOME" "\${path#\\\${HOME}/}" ;;
+    "\\\$PWD") printf '%s\\n' "\$PWD" ;;
+    "\\\$PWD/"*) printf '%s/%s\\n' "\$PWD" "\${path#\\\$PWD/}" ;;
+    "\\\${PWD}") printf '%s\\n' "\$PWD" ;;
+    "\\\${PWD}/"*) printf '%s/%s\\n' "\$PWD" "\${path#\\\${PWD}/}" ;;
+    *) printf '%s\\n' "\$path" ;;
+  esac
+}
+
 [[ -z "\$ENDPOINT" ]] && { err "ENDPOINT is empty (set GETAGENTS_ENDPOINT or pass --endpoint)"; exit 2; }
 [[ -z "\$API_KEY" ]] && { err "API key is required (set GETAGENTS_API_KEY or pass --api-key)"; exit 2; }
-[[ ! -d "\$SOURCE_DIR" ]] && { err "Source directory not found: \$SOURCE_DIR"; exit 2; }
+
+if [[ \${#SOURCE_DIRS[@]} -eq 0 ]]; then
+  SOURCE_DIRS=("\$PWD")
+fi
+
+EXPANDED_SOURCE_DIRS=()
+for source in "\${SOURCE_DIRS[@]}"; do
+  expanded="\$(expand_source_path "\$source")"
+  [[ ! -d "\$expanded" ]] && { err "Source directory not found: \$expanded"; exit 2; }
+  EXPANDED_SOURCE_DIRS+=("\$expanded")
+done
 
 if [[ -z "\$AGENT_ID" && -z "\$AGENT_NAME" ]]; then
-  AGENT_NAME="\$(basename "\$(cd "\$SOURCE_DIR" && pwd)")"
+  AGENT_NAME="\$(basename "\$(cd "\${EXPANDED_SOURCE_DIRS[0]}" && pwd)")"
   info "No --agent-id / --name provided, defaulting name to: \$AGENT_NAME"
 fi
 
@@ -98,33 +134,56 @@ ZIP_PATH="\$TMP_DIR/agent.zip"
 cleanup() { rm -rf "\$TMP_DIR"; }
 trap cleanup EXIT INT TERM
 
-info "Packaging \$SOURCE_DIR ..."
+source_label="source directories"
+[[ \${#EXPANDED_SOURCE_DIRS[@]} -eq 1 ]] && source_label="source directory"
+info "Packaging \${#EXPANDED_SOURCE_DIRS[@]} \$source_label for type '\$AGENT_TYPE' ..."
 
 if command -v zip >/dev/null 2>&1; then
-  (cd "\$SOURCE_DIR" && zip -qr "\$ZIP_PATH" . \\
-    -x '*/.git/*' '.git/*' \\
-    -x '*/node_modules/*' 'node_modules/*' \\
-    -x '*/__pycache__/*' '__pycache__/*' \\
-    -x '*/.venv/*' '.venv/*' '*/venv/*' 'venv/*' \\
-    -x '*/dist/*' 'dist/*' \\
-    -x '*/build/*' 'build/*' \\
-    -x '*/.cache/*' '.cache/*' \\
-    -x '.DS_Store' '*/.DS_Store' \\
-    -x '*.log')
+  if [[ \${#EXPANDED_SOURCE_DIRS[@]} -eq 1 ]]; then
+    (cd "\${EXPANDED_SOURCE_DIRS[0]}" && zip -qr "\$ZIP_PATH" . \\
+      -x '*/.git/*' '.git/*' \\
+      -x '*/node_modules/*' 'node_modules/*' \\
+      -x '*/__pycache__/*' '__pycache__/*' \\
+      -x '*/.venv/*' '.venv/*' '*/venv/*' 'venv/*' \\
+      -x '*/dist/*' 'dist/*' \\
+      -x '*/build/*' 'build/*' \\
+      -x '*/.cache/*' '.cache/*' \\
+      -x '.DS_Store' '*/.DS_Store' \\
+      -x '*.log')
+  else
+    for source in "\${EXPANDED_SOURCE_DIRS[@]}"; do
+      parent="\$(dirname "\$source")"
+      base="\$(basename "\$source")"
+      (cd "\$parent" && zip -qr "\$ZIP_PATH" "\$base" \\
+        -x '*/.git/*' '.git/*' \\
+        -x '*/node_modules/*' 'node_modules/*' \\
+        -x '*/__pycache__/*' '__pycache__/*' \\
+        -x '*/.venv/*' '.venv/*' '*/venv/*' 'venv/*' \\
+        -x '*/dist/*' 'dist/*' \\
+        -x '*/build/*' 'build/*' \\
+        -x '*/.cache/*' '.cache/*' \\
+        -x '.DS_Store' '*/.DS_Store' \\
+        -x '*.log')
+    done
+  fi
 elif command -v python3 >/dev/null 2>&1; then
-  python3 - "\$SOURCE_DIR" "\$ZIP_PATH" <<'PYEOF'
+  python3 - "\$ZIP_PATH" "\${EXPANDED_SOURCE_DIRS[@]}" <<'PYEOF'
 import os, sys, zipfile
 
-src, dst = sys.argv[1], sys.argv[2]
+dst, sources = sys.argv[1], sys.argv[2:]
 skip = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', '.cache'}
 with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zf:
-    for root, dirs, files in os.walk(src):
-        dirs[:] = [d for d in dirs if d not in skip]
-        for f in files:
-            if f == '.DS_Store' or f.endswith('.log'):
-                continue
-            full = os.path.join(root, f)
-            zf.write(full, os.path.relpath(full, src))
+    for src in sources:
+        root_prefix = os.path.basename(os.path.abspath(src)) if len(sources) > 1 else ''
+        for root, dirs, files in os.walk(src):
+            dirs[:] = [d for d in dirs if d not in skip]
+            for f in files:
+                if f == '.DS_Store' or f.endswith('.log'):
+                    continue
+                full = os.path.join(root, f)
+                rel = os.path.relpath(full, src)
+                arcname = os.path.join(root_prefix, rel) if root_prefix else rel
+                zf.write(full, arcname)
 PYEOF
 else
   err "Neither 'zip' nor 'python3' is available — install one and retry"
@@ -146,6 +205,7 @@ CURL_ARGS=(-fsSL -X POST
 
 [[ -n "\$AGENT_ID" ]]     && CURL_ARGS+=(-F "agentId=\$AGENT_ID")
 [[ -n "\$AGENT_NAME" ]]   && CURL_ARGS+=(-F "name=\$AGENT_NAME")
+[[ -n "\$AGENT_TYPE" ]]   && CURL_ARGS+=(-F "type=\$AGENT_TYPE")
 [[ -n "\$DESCRIPTION" ]]  && CURL_ARGS+=(-F "description=\$DESCRIPTION")
 [[ -n "\$TAGS" ]]         && CURL_ARGS+=(-F "tags=\$TAGS")
 [[ -n "\$COMMENT" ]]      && CURL_ARGS+=(-F "comment=\$COMMENT")

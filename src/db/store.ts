@@ -8,6 +8,7 @@ export const createUser = store.createUser;
 export const getUserByUsername = store.getUserByUsername;
 export const getUserById = store.getUserById;
 export const getAllUsers = store.getAllUsers;
+export const updateUserPasswordHash = store.updateUserPasswordHash;
 
 // Agents
 export const getAllAgents = store.getAllAgents;
@@ -20,6 +21,12 @@ export const deleteAgent = store.deleteAgent;
 export const getManagedTags = store.getManagedTags;
 export const createManagedTag = store.createManagedTag;
 export const deleteManagedTag = store.deleteManagedTag;
+
+// Managed agent types
+export const getManagedAgentTypes = store.getManagedAgentTypes;
+export const createManagedAgentType = store.createManagedAgentType;
+export const updateManagedAgentType = store.updateManagedAgentType;
+export const deleteManagedAgentType = store.deleteManagedAgentType;
 
 // Version management
 export const getVersions = store.getVersions;

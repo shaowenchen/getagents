@@ -1,5 +1,6 @@
 import bcrypt from 'bcrypt';
-import { getUserByUsername, createUser, getAllUsers } from '../db/store.js';
+import { getUserByUsername, createUser, getAllUsers, updateUserPasswordHash } from '../db/store.js';
+import { invalidateApiKeyCache } from '../middleware/adminAuth.js';
 import { createLogger } from './logger.js';
 
 const log = createLogger('ensureAdmin');
@@ -19,8 +20,17 @@ export async function ensureAdminUser(adminApiKey: string) {
   const existing = await getUserByUsername(ADMIN_USERNAME);
 
   if (existing) {
-    log.debug('Admin user already exists', { username: existing.username, userId: existing.id });
-    return { username: existing.username, created: false };
+    const valid = await bcrypt.compare(adminApiKey, existing.passwordHash);
+    if (valid) {
+      log.debug('Admin user already exists with current API key', { username: existing.username, userId: existing.id });
+      return { username: existing.username, created: false, updated: false };
+    }
+
+    log.info('Updating admin API key hash from ADMIN_API_KEY', { username: existing.username, userId: existing.id });
+    const passwordHash = await bcrypt.hash(adminApiKey, 10);
+    await updateUserPasswordHash(existing.id, passwordHash);
+    invalidateApiKeyCache();
+    return { username: existing.username, created: false, updated: true };
   }
 
   log.info('Creating admin user', { username: ADMIN_USERNAME });

@@ -42,6 +42,13 @@ function parseBool(value: unknown, defaultValue: boolean): boolean {
   return value === 'true' || value === true || value === '1' || value === 1;
 }
 
+async function validateAgentType(userId: string, value: unknown): Promise<string> {
+  const type = String(value || 'workspace').trim();
+  const allowed = new Set((await db.getManagedAgentTypes(userId)).map((item) => item.name));
+  if (!allowed.has(type)) throw new Error(`Unknown type: ${type}`);
+  return type;
+}
+
 router.get('/ping', requireAuth, (req: Request, res: Response) => {
   res.json({ ok: true, userId: (req as any).userId, authVia: (req as any).authVia || 'jwt' });
 });
@@ -53,11 +60,13 @@ router.post('/upload', requireAuth, upload.single('agentFile'), asyncHandler(asy
   const name = (req.body.name || '').toString().trim();
   const agentId = (req.body.agentId || req.body.id || '').toString().trim();
   const description = (req.body.description || '').toString();
+  let type: string;
   let tags: string[] | undefined;
   try {
+    type = await validateAgentType(userId, req.body.type);
     tags = await validateManagedTags(userId, parseTags(req.body.tags));
   } catch (err) {
-    return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid tags' });
+    return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid agent metadata' });
   }
   const enabled = parseBool(req.body.enabled, true);
   const isPublic = parseBool(req.body.isPublic, false);
@@ -84,6 +93,7 @@ router.post('/upload', requireAuth, upload.single('agentFile'), asyncHandler(asy
   if (!target) {
     const agent = await db.createAgent(userId, {
       name,
+      type,
       description: description || `Uploaded via CLI on ${new Date().toISOString()}`,
       filename,
       fileSize,
@@ -116,6 +126,7 @@ router.post('/upload', requireAuth, upload.single('agentFile'), asyncHandler(asy
     fileHash,
   };
   if (description) patch.description = description;
+  if (req.body.type !== undefined) patch.type = type;
   if (tags !== undefined) patch.tags = tags;
   if (req.body.enabled !== undefined) patch.enabled = enabled;
   if (req.body.isPublic !== undefined) patch.isPublic = isPublic;

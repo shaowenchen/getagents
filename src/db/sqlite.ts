@@ -26,7 +26,12 @@ db.exec(`
   CREATE TABLE users (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
+    login_key_hash TEXT NOT NULL,
+    upload_key_hash TEXT NOT NULL,
+    download_key_hash TEXT NOT NULL,
+    login_key TEXT,
+    upload_key TEXT,
+    download_key TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -193,21 +198,30 @@ async function seedDefaultAgentTypes(userId: string): Promise<void> {
   }
 }
 
-export async function createUser(username: string, passwordHash: string): Promise<User> {
+export async function createUser(
+  username: string,
+  loginKeyHash: string,
+  keys?: { loginKey?: string; uploadKey: string; uploadKeyHash: string; downloadKey: string; downloadKeyHash: string }
+): Promise<User> {
   const id = uuid();
   const now = Date.now();
-  db.prepare('INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES (?,?,?,?,?)')
-    .run(id, username, passwordHash, now, now);
+  db.prepare('INSERT INTO users (id, username, login_key_hash, upload_key_hash, download_key_hash, login_key, upload_key, download_key, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(id, username, loginKeyHash, keys?.uploadKeyHash || loginKeyHash, keys?.downloadKeyHash || loginKeyHash, keys?.loginKey || null, keys?.uploadKey || null, keys?.downloadKey || null, now, now);
   return { id, username, createdAt: now };
 }
 
-export async function getUserByUsername(username: string): Promise<(User & { passwordHash: string }) | undefined> {
+export async function getUserByUsername(username: string): Promise<(User & { loginKeyHash: string; uploadKeyHash: string; downloadKeyHash: string; loginKey?: string; uploadKey?: string; downloadKey?: string }) | undefined> {
   const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as Record<string, unknown> | undefined;
   if (!row) return undefined;
   return {
     id: row.id as string,
     username: row.username as string,
-    passwordHash: row.password_hash as string,
+    loginKeyHash: row.login_key_hash as string,
+    uploadKeyHash: row.upload_key_hash as string,
+    downloadKeyHash: row.download_key_hash as string,
+    loginKey: (row.login_key as string) || undefined,
+    uploadKey: (row.upload_key as string) || undefined,
+    downloadKey: (row.download_key as string) || undefined,
     createdAt: Number(row.created_at),
   };
 }
@@ -217,16 +231,44 @@ export async function getUserById(id: string): Promise<User | undefined> {
   return row ? rowToUser(row) : undefined;
 }
 
-export async function getAllUsers(): Promise<(User & { passwordHash: string })[]> {
-  return db.prepare('SELECT id, username, password_hash, created_at FROM users').all().map((row: unknown) => {
+export async function getAllUsers(): Promise<(User & { loginKeyHash: string; uploadKeyHash: string; downloadKeyHash: string; loginKey?: string; uploadKey?: string; downloadKey?: string })[]> {
+  return db.prepare('SELECT id, username, login_key_hash, upload_key_hash, download_key_hash, login_key, upload_key, download_key, created_at FROM users').all().map((row: unknown) => {
     const r = row as Record<string, unknown>;
-    return { id: r.id as string, username: r.username as string, passwordHash: r.password_hash as string, createdAt: Number(r.created_at) };
+    return {
+      id: r.id as string,
+      username: r.username as string,
+      loginKeyHash: r.login_key_hash as string,
+      uploadKeyHash: r.upload_key_hash as string,
+      downloadKeyHash: r.download_key_hash as string,
+      loginKey: (r.login_key as string) || undefined,
+      uploadKey: (r.upload_key as string) || undefined,
+      downloadKey: (r.download_key as string) || undefined,
+      createdAt: Number(r.created_at),
+    };
   });
 }
 
-export async function updateUserPasswordHash(userId: string, passwordHash: string): Promise<boolean> {
-  const result = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?')
-    .run(passwordHash, Date.now(), userId);
+export async function updateUserKeys(
+  userId: string,
+  keys: { loginKey?: string; loginKeyHash?: string; uploadKey?: string; uploadKeyHash?: string; downloadKey?: string; downloadKeyHash?: string }
+): Promise<boolean> {
+  const existing = await getUserById(userId);
+  if (!existing) return false;
+  const current = await getAllUsers().then(users => users.find(user => user.id === userId));
+  const result = db.prepare(`
+    UPDATE users
+    SET login_key_hash = ?, upload_key_hash = ?, download_key_hash = ?, login_key = ?, upload_key = ?, download_key = ?, updated_at = ?
+    WHERE id = ?
+  `).run(
+    keys.loginKeyHash || current?.loginKeyHash,
+    keys.uploadKeyHash || current?.uploadKeyHash,
+    keys.downloadKeyHash || current?.downloadKeyHash,
+    keys.loginKey || current?.loginKey || null,
+    keys.uploadKey || current?.uploadKey || null,
+    keys.downloadKey || current?.downloadKey || null,
+    Date.now(),
+    userId
+  );
   return result.changes > 0;
 }
 

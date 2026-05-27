@@ -25,14 +25,13 @@ function handleRoute() {
       (nav === 'marketplace' && path === '/') ||
       (nav === 'marketplace' && path === '/marketplace') ||
       (nav === 'agents' && path === '/agents') ||
-      (nav === 'admin' && path === '/admin')
+      (nav === 'profile' && path === '/profile')
     );
   });
 
   document.querySelector('nav a[data-nav="home"]')?.setAttribute('href', routeHref('/'));
   document.querySelector('nav a[data-nav="marketplace"]')?.setAttribute('href', routeHref('/marketplace'));
   document.querySelector('nav a[data-nav="agents"]')?.setAttribute('href', routeHref('/agents'));
-  document.querySelector('nav a[data-nav="admin"]')?.setAttribute('href', routeHref('/admin'));
 
   const appEl = document.getElementById('app');
   const mainEl = document.querySelector('main');
@@ -45,6 +44,7 @@ function handleRoute() {
     routeMap.get('/')?.();
   }
   else if (path === '/agents') routeMap.get('/agents')?.();
+  else if (path === '/profile') routeMap.get('/profile')?.();
   else if (path.startsWith('/agents/')) {
     const agentId = path.slice(8);
     routeMap.get('/agents/:id')?.(agentId);

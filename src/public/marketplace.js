@@ -39,7 +39,6 @@ async function renderMarketplace() {
       </div>
       <div class="mp-nav-btns">
         <button class="btn-ghost" onclick="navigateTo('/agents')">My Agents</button>
-        <button class="btn-ghost" onclick="navigateTo('/admin')">Admin</button>
       </div>
     </div>
 

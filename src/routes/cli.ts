@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import crypto from 'crypto';
-import { requireAuth } from '../middleware/adminAuth.js';
+import { requireAuth, requireUploadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import * as db from '../db/store.js';
 import { saveAgentFile } from '../utils/fileStore.js';
@@ -53,7 +53,7 @@ router.get('/ping', requireAuth, (req: Request, res: Response) => {
   res.json({ ok: true, userId: (req as any).userId, authVia: (req as any).authVia || 'jwt' });
 });
 
-router.post('/upload', requireAuth, upload.single('agentFile'), asyncHandler(async (req, res) => {
+router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandler(async (req, res) => {
   const userId = (req as any).userId as string;
   if (!req.file) return res.status(400).json({ error: 'agentFile (ZIP) is required' });
 
@@ -94,7 +94,7 @@ router.post('/upload', requireAuth, upload.single('agentFile'), asyncHandler(asy
     const agent = await db.createAgent(userId, {
       name,
       type,
-      description: description || `Uploaded via CLI on ${new Date().toISOString()}`,
+      description: description || '',
       filename,
       fileSize,
       fileHash,

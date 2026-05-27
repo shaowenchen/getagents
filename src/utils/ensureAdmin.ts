@@ -1,7 +1,7 @@
-import bcrypt from 'bcrypt';
-import { getUserByUsername, createUser, getAllUsers, updateUserPasswordHash } from '../db/store.js';
+import { getUserByUsername, createUser, getAllUsers, updateUserKeys } from '../db/store.js';
 import { invalidateApiKeyCache } from '../middleware/adminAuth.js';
 import { createLogger } from './logger.js';
+import { generateUserKeys, hashUserKeys } from './userKeys.js';
 
 const log = createLogger('ensureAdmin');
 
@@ -9,8 +9,7 @@ const ADMIN_USERNAME = 'admin';
 
 export async function ensureAdminUser(adminApiKey: string) {
   log.info('Ensuring admin user exists', {
-    adminApiKeyPrefix: adminApiKey.slice(0, 8),
-    adminApiKeyLength: adminApiKey.length,
+    hasExtraAdminLoginKey: Boolean(adminApiKey),
   });
 
   // First, check all users for debugging
@@ -20,27 +19,45 @@ export async function ensureAdminUser(adminApiKey: string) {
   const existing = await getUserByUsername(ADMIN_USERNAME);
 
   if (existing) {
-    const valid = await bcrypt.compare(adminApiKey, existing.passwordHash);
-    if (valid) {
-      log.debug('Admin user already exists with current API key', { username: existing.username, userId: existing.id });
+    const hasNormalKeys = Boolean(
+      existing.loginKey &&
+      existing.uploadKey &&
+      existing.downloadKey &&
+      existing.loginKey !== adminApiKey &&
+      !existing.uploadKey.startsWith('up-admin-') &&
+      !existing.downloadKey.startsWith('down-admin-')
+    );
+    if (hasNormalKeys) {
+      log.debug('Admin user already exists with generated API keys', { username: existing.username, userId: existing.id });
       return { username: existing.username, created: false, updated: false };
     }
 
-    log.info('Updating admin API key hash from ADMIN_API_KEY', { username: existing.username, userId: existing.id });
-    const passwordHash = await bcrypt.hash(adminApiKey, 10);
-    await updateUserPasswordHash(existing.id, passwordHash);
+    log.info('Generating normal admin API keys', { username: existing.username, userId: existing.id });
+    const keys = generateUserKeys();
+    const hashes = await hashUserKeys(keys);
+    await updateUserKeys(existing.id, {
+      loginKey: keys.loginKey,
+      loginKeyHash: hashes.loginKeyHash,
+      uploadKey: keys.uploadKey,
+      uploadKeyHash: hashes.uploadKeyHash,
+      downloadKey: keys.downloadKey,
+      downloadKeyHash: hashes.downloadKeyHash,
+    });
     invalidateApiKeyCache();
     return { username: existing.username, created: false, updated: true };
   }
 
   log.info('Creating admin user', { username: ADMIN_USERNAME });
-  const passwordHash = await bcrypt.hash(adminApiKey, 10);
-  const user = await createUser(ADMIN_USERNAME, passwordHash);
+  const keys = generateUserKeys();
+  const hashes = await hashUserKeys(keys);
+  const user = await createUser(ADMIN_USERNAME, hashes.loginKeyHash, {
+    loginKey: keys.loginKey,
+    uploadKey: keys.uploadKey,
+    uploadKeyHash: hashes.uploadKeyHash,
+    downloadKey: keys.downloadKey,
+    downloadKeyHash: hashes.downloadKeyHash,
+  });
   log.info('Admin user created', { username: user.username, userId: user.id });
-
-  // Verify the hash works
-  const verify = await bcrypt.compare(adminApiKey, passwordHash);
-  log.debug('Hash verification self-test', { ok: verify });
 
   return { username: user.username, created: true };
 }

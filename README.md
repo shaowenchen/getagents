@@ -41,7 +41,7 @@ ADMIN_API_KEY=user-admin-api-key-change-me
 
 - `URI_PREFIX` is the mounted app path.
 - `ACCESS_URL` is the public URL used when generating download links and CLI upload commands.
-- `ADMIN_API_KEY` creates or unlocks the built-in `admin` user. If unset, it defaults to `user-admin-api-key-change-me`.
+- `ADMIN_API_KEY` is an extra login-only key for the built-in `admin` account. The admin account's normal login/upload/download keys are generated randomly.
 - `MAX_UPLOAD_MB` controls ZIP upload size.
 
 ## Databases
@@ -82,9 +82,9 @@ STORAGE_DRIVER=local
 Local ZIP files are stored at:
 
 ```text
-~/.getagents/agents/<agentId>/current.zip
-~/.getagents/agents/<agentId>/v1.zip
-~/.getagents/agents/<agentId>/v2.zip
+~/.getagents/agents/uploads/<agentId>/v1.zip
+~/.getagents/agents/uploads/<agentId>/v2.zip
+~/.getagents/agents/downloads/<agentId>/current.zip
 ```
 
 ### AGFS Storage
@@ -108,9 +108,9 @@ AGFS_ROOT_PATH=/s3fs/getagents
 Stored package paths:
 
 ```text
-/s3fs/getagents/agents/<agentId>/current.zip
-/s3fs/getagents/agents/<agentId>/v1.zip
-/s3fs/getagents/agents/<agentId>/v2.zip
+/s3fs/getagents/uploads/<agentId>/v1.zip
+/s3fs/getagents/uploads/<agentId>/v2.zip
+/s3fs/getagents/downloads/<agentId>/current.zip
 ```
 
 To store packages in S3 through AGFS, configure S3 in AGFS and point `AGFS_ROOT_PATH` at the mounted S3 path, for example `/s3fs/getagents`.
@@ -131,9 +131,9 @@ AWS_BUCKET_URI=s3://getagents/agents
 Stored object keys:
 
 ```text
-agents/<agentId>/current.zip
-agents/<agentId>/v1.zip
-agents/<agentId>/v2.zip
+agents/uploads/<agentId>/v1.zip
+agents/uploads/<agentId>/v2.zip
+agents/downloads/<agentId>/current.zip
 ```
 
 `AWS_BUCKET_URI` combines the bucket and key prefix. For example, `s3://getagents/agents` stores packages under the `agents/` prefix in the `getagents` bucket.
@@ -188,7 +188,7 @@ Before deploying, update:
 
 - `ACCESS_URL`
 - `SESSION_SECRET`
-- `ADMIN_API_KEY`
+- `ADMIN_API_KEY`, if you want an extra login-only key for the built-in `admin` account
 - `SQL_DSN`, if using MySQL
 - `STORAGE_DRIVER`
 - `AGFS_API_URL` and `AGFS_ROOT_PATH`, if using AGFS storage

@@ -1,6 +1,6 @@
 import { Router, type Request } from 'express';
 import * as db from '../db/store.js';
-import { requireAuth } from '../middleware/adminAuth.js';
+import { requireAuth, requireDownloadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { saveAgentFile, getAgentFileStream, copyAgentFiles, deleteAgentFiles } from '../utils/fileStore.js';
 import { inferAccessUrl, normalizeRoutePrefix } from '../utils/accessUrl.js';
@@ -67,8 +67,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
 router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (req, res) => {
   const userId = (req as any).userId;
   const { name, description, tags, isPublic, avatar } = req.body;
-  if (!name || !description) {
-    return res.status(400).json({ error: 'name and description are required' });
+  if (!name) {
+    return res.status(400).json({ error: 'name is required' });
   }
   if (!req.file) {
     return res.status(400).json({ error: 'agentFile (ZIP) is required' });
@@ -153,7 +153,7 @@ router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
 
 // ---- File Download ----
 
-router.get('/:id/download', asyncHandler(async (req, res) => {
+router.get('/:id/download', requireDownloadAuth, asyncHandler(async (req, res) => {
   const agent = await db.getAgent(req.params.id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
@@ -166,7 +166,7 @@ router.get('/:id/download', asyncHandler(async (req, res) => {
   stream.pipe(res);
 }));
 
-router.get('/:id/download/:version', asyncHandler(async (req, res) => {
+router.get('/:id/download/:version', requireDownloadAuth, asyncHandler(async (req, res) => {
   const agent = await db.getAgent(req.params.id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
 

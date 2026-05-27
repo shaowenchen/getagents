@@ -5,7 +5,9 @@ import { getAllUsers } from '../db/store.js';
 
 const SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 
-// In-memory cache: apiKey -> userId.
+type ApiKeyPurpose = 'login' | 'upload' | 'download';
+
+// In-memory cache: purpose:apiKey -> userId.
 // We cache after the first successful bcrypt comparison so subsequent CLI
 // uploads are O(1) instead of scanning every user on every request.
 const apiKeyCache = new Map<string, string>();
@@ -29,6 +31,9 @@ function extractApiKey(req: Request): string | undefined {
 
   const auth = req.headers.authorization;
   if (auth?.startsWith('ApiKey ')) return auth.slice(7).trim();
+
+  const queryKey = req.query.downloadKey || req.query.apiKey || req.query.key;
+  if (typeof queryKey === 'string' && queryKey.trim()) return queryKey.trim();
   return undefined;
 }
 
@@ -43,28 +48,42 @@ function verifyToken(token: string): { userId: string } | null {
   } catch { return null; }
 }
 
-async function verifyApiKey(apiKey: string): Promise<string | null> {
-  const cached = apiKeyCache.get(apiKey);
-  if (cached) return cached;
+async function verifyApiKey(apiKey: string, purposes: ApiKeyPurpose[]): Promise<string | null> {
+  for (const purpose of purposes) {
+    const cached = apiKeyCache.get(`${purpose}:${apiKey}`);
+    if (cached) return cached;
+  }
 
   const users = await getAllUsers();
   for (const user of users) {
-    try {
-      if (await bcrypt.compare(apiKey, user.passwordHash)) {
-        apiKeyCache.set(apiKey, user.id);
-        return user.id;
+    const checks: Array<[ApiKeyPurpose, string | undefined]> = [
+      ['login', user.loginKeyHash],
+      ['upload', user.uploadKeyHash],
+      ['download', user.downloadKeyHash],
+    ];
+    for (const [purpose, hash] of checks) {
+      if (!purposes.includes(purpose) || !hash) continue;
+      try {
+        if (await bcrypt.compare(apiKey, hash)) {
+          apiKeyCache.set(`${purpose}:${apiKey}`, user.id);
+          return user.id;
+        }
+      } catch {
+        /* ignore */
       }
-    } catch { /* ignore */ }
+    }
   }
   return null;
 }
 
 export function invalidateApiKeyCache(apiKey?: string): void {
-  if (apiKey) apiKeyCache.delete(apiKey);
+  if (apiKey) {
+    for (const purpose of ['login', 'upload', 'download'] as const) apiKeyCache.delete(`${purpose}:${apiKey}`);
+  }
   else apiKeyCache.clear();
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+function requireAuthWithPurposes(req: Request, res: Response, next: NextFunction, purposes: ApiKeyPurpose[]): void {
   // 1) Bearer JWT (browser sessions)
   const token = extractToken(req);
   if (token) {
@@ -78,7 +97,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   // 2) X-API-Key / Authorization: ApiKey <key> (CLI / automation)
   const apiKey = extractApiKey(req);
   if (apiKey) {
-    verifyApiKey(apiKey)
+    verifyApiKey(apiKey, purposes)
       .then((userId) => {
         if (userId) {
           (req as any).userId = userId;
@@ -92,4 +111,16 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
 
   res.status(401).json({ error: 'Unauthorized' });
+}
+
+export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  requireAuthWithPurposes(req, res, next, ['login']);
+}
+
+export function requireUploadAuth(req: Request, res: Response, next: NextFunction): void {
+  requireAuthWithPurposes(req, res, next, ['upload', 'login']);
+}
+
+export function requireDownloadAuth(req: Request, res: Response, next: NextFunction): void {
+  requireAuthWithPurposes(req, res, next, ['download', 'login']);
 }

@@ -1,7 +1,6 @@
 import { Router } from 'express';
-import crypto from 'crypto';
 import bcrypt from 'bcrypt';
-import { createAuthToken, requireAuth } from '../middleware/adminAuth.js';
+import { createAuthToken, invalidateApiKeyCache, requireAuth } from '../middleware/adminAuth.js';
 import {
   createManagedAgentType,
   createManagedTag,
@@ -14,12 +13,15 @@ import {
   getUserById,
   getUserByUsername,
   updateManagedAgentType,
+  updateUserKeys,
 } from '../db/store.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { createLogger } from '../utils/logger.js';
+import { generateUserKey, generateUserKeys, hashUserKeys, type UserKeyKind } from '../utils/userKeys.js';
 
 const log = createLogger('admin-route');
 const router = Router();
+const DEFAULT_EXTRA_ADMIN_API_KEY = 'user-admin-api-key-change-me';
 
 function parseBackupDirs(value: unknown): string[] {
   if (Array.isArray(value)) return [...new Set(value.map((dir) => String(dir).trim()).filter(Boolean))];
@@ -27,6 +29,73 @@ function parseBackupDirs(value: unknown): string[] {
     .split(/\r?\n|,/)
     .map((dir) => dir.trim())
     .filter(Boolean);
+}
+
+async function requireSystemAdmin(req: any, res: any): Promise<boolean> {
+  const user = await getUserById(req.userId);
+  if (user?.username !== 'admin') {
+    res.status(403).json({ error: 'Admin user required' });
+    return false;
+  }
+  return true;
+}
+
+function extraAdminApiKey(): string {
+  return process.env.ADMIN_API_KEY || DEFAULT_EXTRA_ADMIN_API_KEY;
+}
+
+function isExtraAdminLoginKey(apiKey: unknown): boolean {
+  const value = typeof apiKey === 'string' ? apiKey : '';
+  const extraKey = extraAdminApiKey();
+  return Boolean(value && extraKey && value === extraKey);
+}
+
+function loginResponse(user: Awaited<ReturnType<typeof getUserByUsername>>, apiKey: unknown) {
+  if (!user) throw new Error('User is required');
+  return {
+    token: createAuthToken(user.id),
+    userId: user.id,
+    username: user.username,
+    apiKey: user.loginKey || String(apiKey),
+    loginKey: user.loginKey || String(apiKey),
+    uploadKey: user.uploadKey || '',
+    downloadKey: user.downloadKey || '',
+  };
+}
+
+function parseKeyKind(value: unknown): UserKeyKind | 'all' {
+  const kind = String(value || 'all');
+  if (kind === 'login' || kind === 'upload' || kind === 'download' || kind === 'all') return kind;
+  throw new Error('keyType must be one of login, upload, download, all');
+}
+
+async function resetUserKeys(userId: string, keyType: UserKeyKind | 'all') {
+  if (keyType === 'all') {
+    const keys = generateUserKeys();
+    const hashes = await hashUserKeys(keys);
+    await updateUserKeys(userId, {
+      loginKey: keys.loginKey,
+      loginKeyHash: hashes.loginKeyHash,
+      uploadKey: keys.uploadKey,
+      uploadKeyHash: hashes.uploadKeyHash,
+      downloadKey: keys.downloadKey,
+      downloadKeyHash: hashes.downloadKeyHash,
+    });
+    return keys;
+  }
+
+  const key = generateUserKey(keyType);
+  const hash = await bcrypt.hash(key, 10);
+  await updateUserKeys(userId, {
+    ...(keyType === 'login' ? { loginKey: key, loginKeyHash: hash } : {}),
+    ...(keyType === 'upload' ? { uploadKey: key, uploadKeyHash: hash } : {}),
+    ...(keyType === 'download' ? { downloadKey: key, downloadKeyHash: hash } : {}),
+  });
+  return {
+    ...(keyType === 'login' ? { loginKey: key } : {}),
+    ...(keyType === 'upload' ? { uploadKey: key } : {}),
+    ...(keyType === 'download' ? { downloadKey: key } : {}),
+  };
 }
 
 router.get('/status', requireAuth, asyncHandler(async (req, res) => {
@@ -100,6 +169,48 @@ router.delete('/types/:id', requireAuth, asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
+router.get('/users', requireAuth, asyncHandler(async (req, res) => {
+  if (!await requireSystemAdmin(req as any, res)) return;
+  const users = await getAllUsers();
+  res.json(users.map(({ loginKeyHash: _loginKeyHash, uploadKeyHash: _uploadKeyHash, downloadKeyHash: _downloadKeyHash, loginKey: _loginKey, uploadKey: _uploadKey, downloadKey: _downloadKey, ...user }) => user));
+}));
+
+router.post('/users/:id/reset-api-key', requireAuth, asyncHandler(async (req, res) => {
+  if (!await requireSystemAdmin(req as any, res)) return;
+  const target = await getUserById(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  let keyType: UserKeyKind | 'all';
+  try {
+    keyType = parseKeyKind(req.body?.keyType);
+  } catch (err) {
+    return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid key type' });
+  }
+
+  const keys = await resetUserKeys(target.id, keyType);
+  invalidateApiKeyCache();
+  log.info('User API key reset', { username: target.username, userId: target.id, keyType, resetBy: (req as any).userId });
+  res.json({ userId: target.id, username: target.username, keyType, apiKey: keys.loginKey, ...keys });
+}));
+
+router.post('/keys/:keyType/reset', requireAuth, asyncHandler(async (req, res) => {
+  let keyType: UserKeyKind;
+  try {
+    const parsed = parseKeyKind(req.params.keyType);
+    if (parsed === 'all') throw new Error('keyType must be one of login, upload, download');
+    keyType = parsed;
+  } catch (err) {
+    return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid key type' });
+  }
+
+  const user = await getUserById((req as any).userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const keys = await resetUserKeys(user.id, keyType);
+  invalidateApiKeyCache();
+  log.info('User reset own API key', { username: user.username, userId: user.id, keyType });
+  res.json({ userId: user.id, username: user.username, keyType, apiKey: keys.loginKey, ...keys });
+}));
+
 router.post('/register', asyncHandler(async (req, res) => {
   const { username } = req.body || {};
   if (!username || typeof username !== 'string' || username.trim().length < 2) {
@@ -113,12 +224,18 @@ router.post('/register', asyncHandler(async (req, res) => {
     return res.status(409).json({ error: 'Username already taken' });
   }
 
-  const apiKey = `user-${crypto.randomBytes(24).toString('base64url')}`;
-  const passwordHash = await bcrypt.hash(apiKey, 10);
-  const user = await createUser(username.trim(), passwordHash);
+  const keys = generateUserKeys();
+  const hashes = await hashUserKeys(keys);
+  const user = await createUser(username.trim(), hashes.loginKeyHash, {
+    loginKey: keys.loginKey,
+    uploadKey: keys.uploadKey,
+    uploadKeyHash: hashes.uploadKeyHash,
+    downloadKey: keys.downloadKey,
+    downloadKeyHash: hashes.downloadKeyHash,
+  });
   const token = createAuthToken(user.id);
   log.info('User registered', { username: user.username, userId: user.id });
-  res.status(201).json({ token, userId: user.id, username: user.username, apiKey });
+  res.status(201).json({ token, userId: user.id, username: user.username, apiKey: keys.loginKey, loginKey: keys.loginKey, uploadKey: keys.uploadKey, downloadKey: keys.downloadKey });
 }));
 
 router.post('/login', asyncHandler(async (req, res) => {
@@ -135,18 +252,25 @@ router.post('/login', asyncHandler(async (req, res) => {
     userCount: users.length,
   });
 
+  if (isExtraAdminLoginKey(apiKey)) {
+    const admin = await getUserByUsername('admin');
+    if (admin) {
+      log.info('Admin logged in with extra ADMIN_API_KEY');
+      return res.json(loginResponse(admin, admin.loginKey || apiKey));
+    }
+  }
+
   for (const user of users) {
     log.debug('Comparing against user', { username: user.username, userId: user.id });
     try {
       const valid = await bcrypt.compare(
         typeof apiKey === 'string' ? apiKey : '',
-        user.passwordHash
+        user.loginKeyHash
       );
       log.debug('bcrypt compare result', { username: user.username, valid });
       if (valid) {
-        const token = createAuthToken(user.id);
         log.info('Login successful', { username: user.username });
-        return res.json({ token, userId: user.id, username: user.username });
+        return res.json(loginResponse(user, apiKey));
       }
     } catch (err) {
       log.error('bcrypt compare error', {

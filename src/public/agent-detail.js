@@ -1,5 +1,5 @@
 import { escapeHtml, agentInitial, truncate, avatarColor, formatDateShort } from './utils.js';
-import { api, getAdminApiKey, publicUrl } from './api.js';
+import { api, getAdminApiKey, getUploadApiKey, getDownloadApiKey, publicUrl } from './api.js';
 import { render, navigate } from './router.js';
 import { state } from './state.js';
 import { toast, buildCliCommand, buildCliBaseUrl, agentTypeLabel, agentTypeSource } from './admin.js';
@@ -71,7 +71,7 @@ async function renderAgentDetail(agentId) {
                 <span style="color:var(--muted);margin-left:0.5rem;font-size:0.82rem">${formatTime(agent.updatedAt)}</span>
               </div>
               <div style="display:flex;gap:0.35rem">
-                <a href="${publicUrl(`/api/agents/${agent.id}/download/${v.version}`)}" class="btn-ghost" style="font-size:0.78rem;text-decoration:none;display:inline-block;padding:0.28rem 0.58rem">Download</a>
+                <a href="${downloadUrl(agent.id, v.version)}" class="btn-ghost" style="font-size:0.78rem;text-decoration:none;display:inline-block;padding:0.28rem 0.58rem">Download</a>
                 <button class="btn-ghost" style="font-size:0.78rem" onclick="rollbackVersion('${agent.id}', ${v.version})">Rollback</button>
               </div>
             </div>
@@ -83,13 +83,13 @@ async function renderAgentDetail(agentId) {
     if (e.status === 404) {
       render(`<div class="empty-state"><h3>Agent not found</h3><p class="text-muted"><a href="javascript:void(0)" onclick="navigateTo('/agents')">Back to My Agents</a></p></div>`);
     } else if (e.status === 401) {
-      render(`<div class="empty-state"><h3>Authentication required</h3><p class="text-muted"><a href="javascript:void(0)" onclick="navigateTo('/admin')">Go to Admin</a></p></div>`);
+      render(`<div class="empty-state"><h3>Authentication required</h3><p class="text-muted"><a href="javascript:void(0)" onclick="navigateTo('/agents')">Sign in</a></p></div>`);
     }
   }
 }
 
 function renderAgentCliPanel(agent) {
-  const apiKey = getAdminApiKey();
+  const apiKey = getUploadApiKey() || getAdminApiKey();
   const base = buildCliBaseUrl();
   const cmd = buildCliCommand({ agentId: agent.id, type: agent.type });
   return `
@@ -117,6 +117,13 @@ function renderAgentCliPanel(agent) {
       </div>
     </div>
   `;
+}
+
+function downloadUrl(agentId, version) {
+  const downloadKey = getDownloadApiKey() || getAdminApiKey();
+  const keyPart = downloadKey ? `?downloadKey=${encodeURIComponent(downloadKey)}` : '';
+  const versionPart = version === undefined ? '' : `/${version}`;
+  return publicUrl(`/api/agents/${agentId}/download${versionPart}${keyPart}`);
 }
 
 function formatFileSize(bytes) {

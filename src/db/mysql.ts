@@ -31,7 +31,12 @@ async function init(): Promise<void> {
     CREATE TABLE users (
       id VARCHAR(64) PRIMARY KEY,
       username VARCHAR(255) NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
+      login_key_hash TEXT NOT NULL,
+      upload_key_hash TEXT NOT NULL,
+      download_key_hash TEXT NOT NULL,
+      login_key TEXT,
+      upload_key TEXT,
+      download_key TEXT,
       created_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -159,7 +164,8 @@ type AgentRow = RowDataPacket & {
 };
 
 type UserRow = RowDataPacket & {
-  id: string; username: string; password_hash: string; created_at: number;
+  id: string; username: string; login_key_hash: string; upload_key_hash: string; download_key_hash: string;
+  login_key: string | null; upload_key: string | null; download_key: string | null; created_at: number;
 };
 
 type ManagedTagRow = RowDataPacket & {
@@ -289,19 +295,23 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
 
 // ---- Users ----
 
-export async function createUser(username: string, passwordHash: string): Promise<User> {
+export async function createUser(
+  username: string,
+  loginKeyHash: string,
+  keys?: { loginKey?: string; uploadKey: string; uploadKeyHash: string; downloadKey: string; downloadKeyHash: string }
+): Promise<User> {
   await ensureReady();
   const db = requirePool();
   const id = uuid();
   const now = Date.now();
   await db.execute(
-    'INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES (?,?,?,?,?)',
-    [id, username, passwordHash, now, now]
+    'INSERT INTO users (id, username, login_key_hash, upload_key_hash, download_key_hash, login_key, upload_key, download_key, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    [id, username, loginKeyHash, keys?.uploadKeyHash || loginKeyHash, keys?.downloadKeyHash || loginKeyHash, keys?.loginKey || null, keys?.uploadKey || null, keys?.downloadKey || null, now, now]
   );
   return { id, username, createdAt: now };
 }
 
-export async function getUserByUsername(username: string): Promise<(User & { passwordHash: string }) | undefined> {
+export async function getUserByUsername(username: string): Promise<(User & { loginKeyHash: string; uploadKeyHash: string; downloadKeyHash: string; loginKey?: string; uploadKey?: string; downloadKey?: string }) | undefined> {
   await ensureReady();
   const db = requirePool();
   const [rows] = await db.execute<UserRow[]>('SELECT * FROM users WHERE username = ?', [username]);
@@ -309,7 +319,12 @@ export async function getUserByUsername(username: string): Promise<(User & { pas
   return {
     id: rows[0].id,
     username: rows[0].username,
-    passwordHash: rows[0].password_hash,
+    loginKeyHash: rows[0].login_key_hash,
+    uploadKeyHash: rows[0].upload_key_hash,
+    downloadKeyHash: rows[0].download_key_hash,
+    loginKey: rows[0].login_key ?? undefined,
+    uploadKey: rows[0].upload_key ?? undefined,
+    downloadKey: rows[0].download_key ?? undefined,
     createdAt: Number(rows[0].created_at),
   };
 }
@@ -322,21 +337,45 @@ export async function getUserById(id: string): Promise<User | undefined> {
   return { id: rows[0].id, username: rows[0].username, createdAt: Number(rows[0].created_at) };
 }
 
-export async function getAllUsers(): Promise<(User & { passwordHash: string })[]> {
+export async function getAllUsers(): Promise<(User & { loginKeyHash: string; uploadKeyHash: string; downloadKeyHash: string; loginKey?: string; uploadKey?: string; downloadKey?: string })[]> {
   await ensureReady();
   const db = requirePool();
-  const [rows] = await db.query<UserRow[]>('SELECT id, username, password_hash, created_at FROM users');
+  const [rows] = await db.query<UserRow[]>('SELECT id, username, login_key_hash, upload_key_hash, download_key_hash, login_key, upload_key, download_key, created_at FROM users');
   return rows.map(r => ({
-    id: r.id, username: r.username, passwordHash: r.password_hash, createdAt: Number(r.created_at),
+    id: r.id,
+    username: r.username,
+    loginKeyHash: r.login_key_hash,
+    uploadKeyHash: r.upload_key_hash,
+    downloadKeyHash: r.download_key_hash,
+    loginKey: r.login_key ?? undefined,
+    uploadKey: r.upload_key ?? undefined,
+    downloadKey: r.download_key ?? undefined,
+    createdAt: Number(r.created_at),
   }));
 }
 
-export async function updateUserPasswordHash(userId: string, passwordHash: string): Promise<boolean> {
+export async function updateUserKeys(
+  userId: string,
+  keys: { loginKey?: string; loginKeyHash?: string; uploadKey?: string; uploadKeyHash?: string; downloadKey?: string; downloadKeyHash?: string }
+): Promise<boolean> {
   await ensureReady();
   const db = requirePool();
+  const current = (await getAllUsers()).find(user => user.id === userId);
+  if (!current) return false;
   const [result] = await db.execute<ResultSetHeader>(
-    'UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?',
-    [passwordHash, Date.now(), userId]
+    `UPDATE users
+     SET login_key_hash = ?, upload_key_hash = ?, download_key_hash = ?, login_key = ?, upload_key = ?, download_key = ?, updated_at = ?
+     WHERE id = ?`,
+    [
+      keys.loginKeyHash || current.loginKeyHash,
+      keys.uploadKeyHash || current.uploadKeyHash,
+      keys.downloadKeyHash || current.downloadKeyHash,
+      keys.loginKey || current.loginKey || null,
+      keys.uploadKey || current.uploadKey || null,
+      keys.downloadKey || current.downloadKey || null,
+      Date.now(),
+      userId,
+    ]
   );
   return result.affectedRows > 0;
 }

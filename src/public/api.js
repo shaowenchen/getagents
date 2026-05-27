@@ -1,4 +1,4 @@
-import { ADMIN_TOKEN_KEY, ADMIN_API_KEY_KEY, appConfig } from './state.js';
+import { ADMIN_TOKEN_KEY, ADMIN_API_KEY_KEY, UPLOAD_API_KEY_KEY, DOWNLOAD_API_KEY_KEY, appConfig } from './state.js';
 
 const routePrefix = normalizePrefix(appConfig.routePrefix || '');
 const apiPrefix = appConfig.apiPrefix || `${routePrefix}/api`;
@@ -45,16 +45,21 @@ function getAdminToken() {
   return sessionStorage.getItem(ADMIN_TOKEN_KEY) || '';
 }
 
-function setAdminToken(token, username, apiKey) {
+function setAdminToken(token, username, apiKey, uploadKey, downloadKey) {
   sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
   if (username) sessionStorage.setItem('admin_username', username);
+  else sessionStorage.removeItem('admin_username');
   if (apiKey) sessionStorage.setItem(ADMIN_API_KEY_KEY, apiKey);
+  if (uploadKey) sessionStorage.setItem(UPLOAD_API_KEY_KEY, uploadKey);
+  if (downloadKey) sessionStorage.setItem(DOWNLOAD_API_KEY_KEY, downloadKey);
 }
 
 function clearAdminToken() {
   sessionStorage.removeItem(ADMIN_TOKEN_KEY);
   sessionStorage.removeItem('admin_username');
   sessionStorage.removeItem(ADMIN_API_KEY_KEY);
+  sessionStorage.removeItem(UPLOAD_API_KEY_KEY);
+  sessionStorage.removeItem(DOWNLOAD_API_KEY_KEY);
 }
 
 function getAdminApiKey() {
@@ -63,6 +68,20 @@ function getAdminApiKey() {
 
 function setAdminApiKey(apiKey) {
   if (apiKey) sessionStorage.setItem(ADMIN_API_KEY_KEY, apiKey);
+}
+
+function getUploadApiKey() {
+  return sessionStorage.getItem(UPLOAD_API_KEY_KEY) || '';
+}
+
+function getDownloadApiKey() {
+  return sessionStorage.getItem(DOWNLOAD_API_KEY_KEY) || '';
+}
+
+function setUserApiKeys(keys = {}) {
+  if (keys.apiKey || keys.loginKey) sessionStorage.setItem(ADMIN_API_KEY_KEY, keys.loginKey || keys.apiKey);
+  if (keys.uploadKey) sessionStorage.setItem(UPLOAD_API_KEY_KEY, keys.uploadKey);
+  if (keys.downloadKey) sessionStorage.setItem(DOWNLOAD_API_KEY_KEY, keys.downloadKey);
 }
 
 async function api(path, options = {}) {
@@ -133,4 +152,7 @@ export {
   clearAdminToken,
   getAdminApiKey,
   setAdminApiKey,
+  getUploadApiKey,
+  getDownloadApiKey,
+  setUserApiKeys,
 };

@@ -8,7 +8,7 @@ export const createUser = store.createUser;
 export const getUserByUsername = store.getUserByUsername;
 export const getUserById = store.getUserById;
 export const getAllUsers = store.getAllUsers;
-export const updateUserPasswordHash = store.updateUserPasswordHash;
+export const updateUserKeys = store.updateUserKeys;
 
 // Agents
 export const getAllAgents = store.getAllAgents;

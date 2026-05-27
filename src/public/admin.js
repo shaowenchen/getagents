@@ -1,5 +1,5 @@
 import { escapeHtml, agentInitial, formatTime, truncate, avatarColor } from './utils.js';
-import { api, apiUpload, getAdminToken, setAdminToken, clearAdminToken, getAdminApiKey, publicUrl } from './api.js';
+import { api, apiUpload, getAdminToken, setAdminToken, clearAdminToken, getAdminApiKey, getUploadApiKey, getDownloadApiKey, setUserApiKeys, publicUrl } from './api.js';
 import { render, navigate } from './router.js';
 import { state, createAgentForm, resetAgentForm } from './state.js';
 
@@ -51,8 +51,10 @@ window.submitAdminLogin = async () => {
     return;
   }
   try {
-    const { token, username: name } = await api('/admin/login', { method: 'POST', body: { apiKey } });
-    setAdminToken(token, name, apiKey);
+    const { token, userId, username: name, loginKey, uploadKey, downloadKey } = await api('/admin/login', { method: 'POST', body: { apiKey } });
+    setAdminToken(token, name, loginKey || apiKey, uploadKey, downloadKey);
+    state.currentUser = { userId, username: name };
+    updateUserNavInfo();
     loginMode = 'login';
     await renderCurrentAuthenticatedPage();
   } catch (e) {
@@ -67,8 +69,10 @@ window.submitAdminRegister = async () => {
     return;
   }
   try {
-    const { token, username: name, apiKey } = await api('/admin/register', { method: 'POST', body: { username } });
-    setAdminToken(token, name, apiKey);
+    const { token, userId, username: name, apiKey, uploadKey, downloadKey } = await api('/admin/register', { method: 'POST', body: { username } });
+    setAdminToken(token, name, apiKey, uploadKey, downloadKey);
+    state.currentUser = { userId, username: name };
+    updateUserNavInfo();
     loginMode = 'login';
     registeredKey = apiKey;
     renderAdminLogin();
@@ -79,6 +83,9 @@ window.submitAdminRegister = async () => {
 };
 
 window.adminLogout = () => {
+  state.currentUser = null;
+  state.resetApiKeyResult = null;
+  updateUserNavInfo();
   clearAdminToken();
   loginMode = 'login';
   renderAdminLogin();
@@ -99,6 +106,10 @@ async function renderAdmin() {
   await renderAuthenticated(renderAdminDashboard);
 }
 
+async function renderProfile() {
+  await renderAuthenticated(renderProfilePage);
+}
+
 async function renderUserAgents() {
   await renderAuthenticated(renderUserAgentsPage);
 }
@@ -114,16 +125,163 @@ async function renderAuthenticated(renderPage) {
   if (!status.authenticated) {
     const hadToken = !!getAdminToken();
     if (hadToken) clearAdminToken();
+    state.currentUser = null;
+    updateUserNavInfo();
     renderAdminLogin(hadToken ? 'Session expired. Please sign in again.' : '');
     return;
   }
 
+  state.currentUser = { userId: status.userId, username: status.username || 'User' };
+  if (status.username) sessionStorage.setItem('admin_username', status.username);
+  updateUserNavInfo();
   await renderPage();
+}
+
+function currentUsername() {
+  return state.currentUser?.username || sessionStorage.getItem('admin_username') || 'User';
+}
+
+function userInitial() {
+  return currentUsername().trim().slice(0, 1).toUpperCase() || 'U';
+}
+
+function isSystemAdminUser() {
+  return currentUsername() === 'admin';
+}
+
+function updateUserNavInfo() {
+  const userInfo = document.getElementById('nav-user-info');
+  if (!userInfo) return;
+  if (!state.currentUser) {
+    userInfo.style.display = 'none';
+    userInfo.classList.remove('open');
+    userInfo.innerHTML = '';
+    return;
+  }
+  userInfo.style.display = 'block';
+  userInfo.innerHTML = `
+    <button class="user-menu-button" onclick="toggleUserMenu(event)" title="${escapeHtml(currentUsername())}" aria-label="User menu">
+      ${escapeHtml(userInitial())}
+    </button>
+    <div class="user-menu-dropdown">
+      <div class="user-menu-name">Signed in as <strong>${escapeHtml(currentUsername())}</strong></div>
+      <button class="user-menu-item" onclick="navigateToProfile()">Profile</button>
+      <button class="user-menu-item" onclick="adminLogout()">Sign out</button>
+    </div>
+  `;
+}
+
+window.toggleUserMenu = (event) => {
+  event?.stopPropagation();
+  document.getElementById('nav-user-info')?.classList.toggle('open');
+};
+
+window.navigateToProfile = () => {
+  document.getElementById('nav-user-info')?.classList.remove('open');
+  navigate('/profile');
+};
+
+document.addEventListener('click', (event) => {
+  const menu = document.getElementById('nav-user-info');
+  if (menu && !menu.contains(event.target)) menu.classList.remove('open');
+});
+
+function renderProfileKeyRow(label, optional, keyValue, codeId, keyType) {
+  const missingKey = '<span class="text-muted">Not available in this session. Sign in again or reset the key to view it.</span>';
+  return `
+    <label class="field">
+      <span class="field-label">${label}${optional ? `<span class="field-optional">${optional}</span>` : ''}</span>
+      <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+        <div style="flex:1;min-width:260px">
+          ${keyValue ? `<code id="${codeId}" class="cli-code cli-mini">${escapeHtml(keyValue)}</code>` : missingKey}
+        </div>
+        ${keyValue ? `<button class="btn-ghost" onclick="copyCliCommand('${codeId}')">Copy</button>` : ''}
+        <button class="btn-ghost btn-danger" onclick="resetCurrentUserKey('${keyType}')">Reset</button>
+      </div>
+    </label>
+  `;
+}
+
+function keyTypeLabel(keyType) {
+  if (keyType === 'login') return 'login';
+  if (keyType === 'upload') return 'upload';
+  if (keyType === 'download') return 'download';
+  return 'all';
+}
+
+function renderResetKeyRow(label, keyValue, codeId) {
+  if (!keyValue) return '';
+  return `
+    <label class="field">
+      <span class="field-label">${label}</span>
+      <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+        <div style="flex:1;min-width:260px">
+          <code id="${codeId}" class="cli-code cli-mini">${escapeHtml(keyValue)}</code>
+        </div>
+        <button class="btn-ghost" onclick="copyCliCommand('${codeId}')">Copy</button>
+      </div>
+    </label>
+  `;
+}
+
+window.resetCurrentUserKey = async (keyType) => {
+  const label = keyTypeLabel(keyType);
+  if (!confirm(`Reset your ${label} key? The old key will stop working.`)) return;
+  try {
+    const result = await api(`/admin/keys/${keyType}/reset`, { method: 'POST', admin: true });
+    setUserApiKeys(result);
+    toast(`${label[0].toUpperCase()}${label.slice(1)} key reset`);
+    await renderProfilePage();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+async function renderProfilePage() {
+  const user = state.currentUser || {};
+  const apiKey = getAdminApiKey();
+  const uploadKey = getUploadApiKey();
+  const downloadKey = getDownloadApiKey();
+  render(`
+    <div class="admin-header">
+      <div class="admin-title">
+        <h1>Profile</h1>
+        <p class="text-muted">Your signed-in account information.</p>
+      </div>
+      <div class="admin-actions">
+        <button class="btn-ghost" onclick="navigateTo('/agents')">My Agents</button>
+      </div>
+    </div>
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:0.75rem">
+        <div class="agent-avatar" style="background:#2563eb">${escapeHtml(userInitial())}</div>
+        <div>
+          <h3 style="margin:0">${escapeHtml(currentUsername())}</h3>
+          <p class="text-muted" style="margin:0.2rem 0 0">${currentUsername() === 'admin' ? 'Administrator' : 'User'}</p>
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:1rem">
+        <label class="field">
+          <span class="field-label">User ID</span>
+          <input value="${escapeHtml(user.userId || '')}" readonly>
+        </label>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 0.75rem">Keys</h3>
+      <div class="form-group">
+        ${renderProfileKeyRow('Login API Key', '', apiKey, 'profile-login-key', 'login')}
+        ${renderProfileKeyRow('Upload API Key', 'GETAGENTS_API_KEY / X-API-Key', uploadKey, 'profile-upload-key', 'upload')}
+        ${renderProfileKeyRow('Download API Key', 'downloadKey query / X-API-Key', downloadKey, 'profile-download-key', 'download')}
+      </div>
+    </div>
+  `);
 }
 
 // ---- Agent list + form rendering ----
 
 async function renderUserAgentsPage() {
+  state.resetApiKeyResult = null;
   const [agents, tagOptions, typeOptions] = await Promise.all([
     api('/agents', { admin: true }),
     api('/admin/tags', { admin: true }),
@@ -131,19 +289,16 @@ async function renderUserAgentsPage() {
   ]);
   state.tagOptions = tagOptions;
   state.typeOptions = typeOptions;
-  const username = sessionStorage.getItem('admin_username') || 'User';
 
   render(`
     <div class="admin-header">
       <div class="admin-title">
         <h1>My Agents</h1>
-        <p class="text-muted">${agents.length} agent${agents.length === 1 ? '' : 's'} — signed in as <strong>${escapeHtml(username)}</strong></p>
+        <p class="text-muted">${agents.length} agent${agents.length === 1 ? '' : 's'}</p>
       </div>
       <div class="admin-actions">
         <button class="btn-ghost" onclick="navigateTo('/marketplace')">Marketplace</button>
-        <button class="btn-ghost" onclick="navigateTo('/admin')">Admin</button>
         <button class="btn-primary" onclick="newAgent()">+ New Agent</button>
-        <button class="btn-ghost" onclick="adminLogout()">Sign out</button>
       </div>
     </div>
     ${state.showAgentForm ? renderAgentForm() : ''}
@@ -161,14 +316,28 @@ async function renderUserAgentsPage() {
 }
 
 async function renderAdminDashboard() {
-  const [agents, tagOptions, typeOptions] = await Promise.all([
+  const username = currentUsername();
+  const isSystemAdmin = username === 'admin';
+  if (!isSystemAdmin) {
+    state.currentUser = null;
+    state.resetApiKeyResult = null;
+    clearAdminToken();
+    updateUserNavInfo();
+    loginMode = 'login';
+    renderAdminLogin('Admin access requires signing in with the admin API key.');
+    return;
+  }
+
+  const [agents, tagOptions, typeOptions, userOptions] = await Promise.all([
     api('/agents', { admin: true }),
     api('/admin/tags', { admin: true }),
     api('/admin/types', { admin: true }),
+    isSystemAdmin ? api('/admin/users', { admin: true }) : Promise.resolve([]),
   ]);
   state.tagOptions = tagOptions;
   state.typeOptions = typeOptions;
-  const username = sessionStorage.getItem('admin_username') || 'User';
+  state.userOptions = userOptions;
+  if (!isSystemAdmin && state.adminTab === 'users') state.adminTab = 'agents';
 
   render(`
     <div class="admin-header">
@@ -178,15 +347,14 @@ async function renderAdminDashboard() {
       <div class="admin-actions">
         <button class="btn-ghost" onclick="navigateTo('/agents')">My Agents</button>
         <button class="btn-ghost" onclick="navigateTo('/marketplace')">Marketplace</button>
-        <button class="btn-ghost" onclick="adminLogout()">Sign out</button>
       </div>
     </div>
-    ${renderAdminTabs(agents)}
-    ${state.adminTab === 'tags' ? renderTagManager() : state.adminTab === 'types' ? renderTypeManager() : renderAgentsAdminPanel(agents)}
+    ${renderAdminTabs(agents, isSystemAdmin)}
+    ${renderAdminPanel(agents)}
   `);
 }
 
-function renderAdminTabs(agents) {
+function renderAdminTabs(agents, isSystemAdmin = false) {
   const tab = state.adminTab || 'agents';
   return `
     <div class="admin-tabs">
@@ -199,8 +367,20 @@ function renderAdminTabs(agents) {
       <button class="admin-tab ${tab === 'types' ? 'active' : ''}" onclick="setAdminTab('types')">
         Types
       </button>
+      ${isSystemAdmin ? `
+      <button class="admin-tab ${tab === 'users' ? 'active' : ''}" onclick="setAdminTab('users')">
+        Users
+      </button>
+      ` : ''}
     </div>
   `;
+}
+
+function renderAdminPanel(agents) {
+  if (state.adminTab === 'tags') return renderTagManager();
+  if (state.adminTab === 'types') return renderTypeManager();
+  if (state.adminTab === 'users') return renderUserManager();
+  return renderAgentsAdminPanel(agents);
 }
 
 function renderAgentsAdminPanel(agents) {
@@ -216,7 +396,9 @@ function renderAgentsAdminPanel(agents) {
 }
 
 window.setAdminTab = async (tab) => {
-  state.adminTab = ['agents', 'tags', 'types'].includes(tab) ? tab : 'agents';
+  const nextTab = ['agents', 'tags', 'types', 'users'].includes(tab) ? tab : 'agents';
+  if (state.adminTab !== nextTab) state.resetApiKeyResult = null;
+  state.adminTab = nextTab;
   await renderAdminDashboard();
 };
 
@@ -318,7 +500,7 @@ function buildAgentTypeOptions(selected) {
 
 function buildCliCommand({ agentId, agentName, type, backupDirs, description, tags } = {}) {
   const base = buildCliBaseUrl();
-  const apiKey = getAdminApiKey();
+  const apiKey = getUploadApiKey() || getAdminApiKey();
   const keyPart = apiKey ? `GETAGENTS_API_KEY=${apiKey} ` : 'GETAGENTS_API_KEY=<your-api-key> ';
   const args = [];
   args.push('--type', shellQuote(normalizeAgentType(type)));
@@ -509,6 +691,84 @@ window.deleteManagedType = async (id) => {
   }
 };
 
+// ---- User management ----
+
+function renderUserManager() {
+  const users = state.userOptions || [];
+  const reset = state.resetApiKeyResult;
+  return `
+    ${reset ? `
+      <div class="card" style="margin-bottom:1rem;border-color:#6ee7b7;background:#ecfdf5">
+        <h3 style="margin:0 0 0.35rem;color:#065f46">API keys reset for ${escapeHtml(reset.username)}</h3>
+        <p style="margin:0 0 0.5rem;color:#065f46;font-size:0.85rem">Copy these keys now. They will not be shown again.</p>
+        <div class="form-group">
+          ${renderResetKeyRow('Login key', reset.loginKey || reset.apiKey || '', 'reset-login-key')}
+          ${renderResetKeyRow('Upload key', reset.uploadKey || '', 'reset-upload-key')}
+          ${renderResetKeyRow('Download key', reset.downloadKey || '', 'reset-download-key')}
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.55rem;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn-ghost" onclick="dismissResetApiKey()">Dismiss</button>
+        </div>
+      </div>
+    ` : ''}
+    <div class="card admin-table-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem">
+        <h3 style="margin:0">Users</h3>
+        <span class="text-muted">${users.length} total</span>
+      </div>
+      ${users.length ? `
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>User ID</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${users.map(user => `
+                <tr>
+                  <td><strong>${escapeHtml(user.username)}</strong></td>
+                  <td><code style="font-size:0.78rem">${escapeHtml(user.id)}</code></td>
+                  <td>${formatTime(user.createdAt)}</td>
+                  <td>
+                    <div style="display:flex;gap:0.35rem;flex-wrap:wrap">
+                      <button class="btn-ghost btn-danger" onclick="resetUserApiKey('${user.id}', 'login')">Reset login</button>
+                      <button class="btn-ghost btn-danger" onclick="resetUserApiKey('${user.id}', 'upload')">Reset upload</button>
+                      <button class="btn-ghost btn-danger" onclick="resetUserApiKey('${user.id}', 'download')">Reset download</button>
+                      <button class="btn-ghost btn-danger" onclick="resetUserApiKey('${user.id}', 'all')">Reset all</button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : '<div class="empty-state" style="padding:1.5rem">No users found.</div>'}
+    </div>
+  `;
+}
+
+window.resetUserApiKey = async (id, keyType = 'all') => {
+  const username = (state.userOptions || []).find(user => user.id === id)?.username || 'this user';
+  const label = keyTypeLabel(keyType);
+  if (!confirm(`Reset ${label} key${keyType === 'all' ? 's' : ''} for ${username}? The old key${keyType === 'all' ? 's' : ''} will stop working.`)) return;
+  try {
+    state.resetApiKeyResult = await api(`/admin/users/${id}/reset-api-key`, { method: 'POST', admin: true, body: { keyType } });
+    if (state.currentUser?.userId === id) setUserApiKeys(state.resetApiKeyResult);
+    await renderCurrentAuthenticatedPage();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+window.dismissResetApiKey = async () => {
+  state.resetApiKeyResult = null;
+  await renderCurrentAuthenticatedPage();
+};
+
 window.toggleAgentTag = (tagName) => {
   const current = Array.isArray(state.agentForm.tags) ? state.agentForm.tags : [];
   state.agentForm.tags = current.includes(tagName)
@@ -528,7 +788,7 @@ function buildAgentFormCliCommand() {
 
 function hasRequiredAgentFormInfo() {
   if (state.editingAgent) return true;
-  return Boolean(String(state.agentForm.name || '').trim() && String(state.agentForm.description || '').trim());
+  return Boolean(String(state.agentForm.name || '').trim());
 }
 
 function renderAgentFormCliCommand() {
@@ -540,14 +800,14 @@ function renderAgentFormCliCommand() {
 }
 
 function renderAgentFormCliCommandContent() {
-  const apiKey = getAdminApiKey();
+  const apiKey = getUploadApiKey() || getAdminApiKey();
   const base = buildCliBaseUrl();
   const isEditing = Boolean(state.editingAgent);
   if (!hasRequiredAgentFormInfo()) {
     return `
       <div class="cli-step-label">Upload from CLI</div>
       <p class="text-muted" style="margin:0;font-size:0.82rem">
-        Fill in Name and Description first, then the upload command will be generated here.
+        Fill in Name first, then the upload command will be generated here.
       </p>
     `;
   }
@@ -597,21 +857,16 @@ function renderAgentForm() {
           </select>
         </label>
         <label class="field">
-          <span class="field-label">Description<span class="field-required">*</span></span>
+          <span class="field-label">Description<span class="field-optional">optional</span></span>
           <input data-agent-field="description" placeholder="What this agent does" value="${escapeHtml(f.description)}" oninput="agentForm.description=this.value; updateAgentFormCliCommand()">
         </label>
-        ${!state.editingAgent ? `
-        <label class="field">
-          <span class="field-label">Agent ZIP File<span class="field-required">*</span></span>
-          <input type="file" id="agent-file-input" accept=".zip" onchange="handleAgentFileChange(event)">
-        </label>
-        ` : `
+        ${state.editingAgent ? `
         <label class="field">
           <span class="field-label">New ZIP File<span class="field-optional">version upgrade</span></span>
           <input type="file" id="agent-file-input" accept=".zip" onchange="handleAgentFileChange(event)">
           <span class="text-muted" style="font-size:0.75rem">Upload a new ZIP to create a new version. Leave empty to only change metadata.</span>
         </label>
-        `}
+        ` : ''}
         <label class="field">
           <span class="field-label">Tags<span class="field-optional">optional</span></span>
           <div class="tag-option-list">
@@ -627,7 +882,7 @@ function renderAgentForm() {
         <label><input data-agent-field="isPublic" type="checkbox" ${f.isPublic ? 'checked' : ''} onchange="agentForm.isPublic=this.checked"> Publish to Marketplace</label>
         ${renderAgentFormCliCommand()}
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
-          <button class="btn-primary" onclick="saveAgent()">${state.editingAgent ? 'Update' : 'Create'}</button>
+          ${state.editingAgent ? '<button class="btn-primary" onclick="saveAgent()">Update</button>' : ''}
           <button class="btn-ghost" onclick="cancelEdit()">Cancel</button>
         </div>
       </div>
@@ -731,6 +986,9 @@ window.editAgent = async (id) => {
 };
 
 window.saveAgent = async () => {
+  if (!state.editingAgent) {
+    return alert('New agents are created from the CLI upload command.');
+  }
   syncAgentFormFromInputs();
   const formData = new FormData();
   formData.append('name', state.agentForm.name);
@@ -740,12 +998,8 @@ window.saveAgent = async () => {
   formData.append('isPublic', state.agentForm.isPublic);
   if ((state.agentForm.tags || []).length) formData.append('tags', state.agentForm.tags.join(','));
 
-  if (!state.agentForm.name || !state.agentForm.description) {
-    return alert('Name and description are required');
-  }
-
-  if (!state.editingAgent && !state.agentFormFile) {
-    return alert('Please select a ZIP file');
+  if (!state.agentForm.name) {
+    return alert('Name is required');
   }
 
   if (state.agentFormFile) {
@@ -788,7 +1042,9 @@ window.cancelEdit = () => {
 // ---- Download ----
 
 window.downloadAgent = (id) => {
-  const url = publicUrl(`/api/agents/${id}/download`);
+  const downloadKey = getDownloadApiKey() || getAdminApiKey();
+  const suffix = downloadKey ? `?downloadKey=${encodeURIComponent(downloadKey)}` : '';
+  const url = publicUrl(`/api/agents/${id}/download${suffix}`);
   const a = document.createElement('a');
   a.href = url;
   a.download = '';
@@ -922,7 +1178,8 @@ window.syncAgentFormFromInputs = () => {
 
 // Navigation helper
 window.navigateTo = (path) => {
+  state.resetApiKeyResult = null;
   navigate(path);
 };
 
-export { renderAdmin, renderUserAgents, toast, buildCliCommand, buildCliBaseUrl, agentTypeLabel, agentTypeSource };
+export { renderAdmin, renderProfile, renderUserAgents, toast, buildCliCommand, buildCliBaseUrl, agentTypeLabel, agentTypeSource };

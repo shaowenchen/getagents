@@ -104,7 +104,7 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
 });
 
 app.listen(Number(PORT), HOST, async () => {
-  // Ensure admin user exists from ADMIN_API_KEY env var
+  // Ensure the admin account exists. ADMIN_API_KEY remains an extra login-only key.
   try {
     const admin = await ensureAdminUser(ADMIN_API_KEY);
     log.info('Admin user ready', { username: admin.username, usingDefaultAdminApiKey: !process.env.ADMIN_API_KEY });

@@ -26,6 +26,7 @@ const state = {
   // Marketplace
   marketplaceSearch: '',
   marketplaceTag: '',
+  marketplaceType: '',
   marketplaceSort: 'popular',
 
   // Toast

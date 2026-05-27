@@ -1,7 +1,7 @@
 // Bash script template served from GET <prefix>/cli/upload.sh.
 // __ENDPOINT__ is replaced at request time with the running server's base URL
 // (e.g. https://example.com/getagents). Users can still override with the
-// GETAGENTS_ENDPOINT env var.
+// GETAGENTS_ENDPOINT or ACCESS_URL env var.
 
 export const UPLOAD_SCRIPT_TEMPLATE = `#!/usr/bin/env bash
 # getagents-upload — Compress the current working directory and upload it
@@ -16,14 +16,15 @@ export const UPLOAD_SCRIPT_TEMPLATE = `#!/usr/bin/env bash
 #   GETAGENTS_API_KEY=user-XXX bash upload.sh --agent-id <id>
 #
 # Environment variables (all overridable by flags):
-#   GETAGENTS_ENDPOINT   Server base URL (defaults to where this script came from)
+#   GETAGENTS_ENDPOINT   Server base URL (overrides ACCESS_URL)
+#   ACCESS_URL           Public GetAgents app URL used as the default endpoint
 #   GETAGENTS_API_KEY    API key from the GetAgents admin page (required)
 #   GETAGENTS_TYPE       Agent type metadata
 #   GETAGENTS_SOURCE     Directory to upload (repeat --source for multiple dirs)
 
 set -euo pipefail
 
-ENDPOINT="\${GETAGENTS_ENDPOINT:-__ENDPOINT__}"
+ENDPOINT="\${GETAGENTS_ENDPOINT:-\${ACCESS_URL:-__ENDPOINT__}}"
 API_KEY="\${GETAGENTS_API_KEY:-}"
 AGENT_TYPE="\${GETAGENTS_TYPE:-workspace}"
 SOURCE_DIRS=()
@@ -93,23 +94,39 @@ info() { echo "[getagents] \$*"; }
 
 expand_source_path() {
   local path="\$1"
-  case "\$path" in
-    "~") printf '%s\\n' "\$HOME" ;;
-    "~/"*) printf '%s/%s\\n' "\$HOME" "\${path#~/}" ;;
-    "\\\$HOME") printf '%s\\n' "\$HOME" ;;
-    "\\\$HOME/"*) printf '%s/%s\\n' "\$HOME" "\${path#\\\$HOME/}" ;;
-    "\\\${HOME}") printf '%s\\n' "\$HOME" ;;
-    "\\\${HOME}/"*) printf '%s/%s\\n' "\$HOME" "\${path#\\\${HOME}/}" ;;
-    "\\\$PWD") printf '%s\\n' "\$PWD" ;;
-    "\\\$PWD/"*) printf '%s/%s\\n' "\$PWD" "\${path#\\\$PWD/}" ;;
-    "\\\${PWD}") printf '%s\\n' "\$PWD" ;;
-    "\\\${PWD}/"*) printf '%s/%s\\n' "\$PWD" "\${path#\\\${PWD}/}" ;;
-    *) printf '%s\\n' "\$path" ;;
-  esac
+  if [[ "\$path" == "~" ]]; then
+    printf '%s\\n' "\$HOME"
+  elif [[ "\$path" == "~/"* ]]; then
+    printf '%s/%s\\n' "\$HOME" "\${path:2}"
+  elif [[ "\$path" == "\\\$HOME" ]]; then
+    printf '%s\\n' "\$HOME"
+  elif [[ "\$path" == "\\\$HOME/"* ]]; then
+    printf '%s/%s\\n' "\$HOME" "\${path:6}"
+  elif [[ "\$path" == "\\\${HOME}" ]]; then
+    printf '%s\\n' "\$HOME"
+  elif [[ "\$path" == "\\\${HOME}/"* ]]; then
+    printf '%s/%s\\n' "\$HOME" "\${path:8}"
+  elif [[ "\$path" == "\\\$PWD" ]]; then
+    printf '%s\\n' "\$PWD"
+  elif [[ "\$path" == "\\\$PWD/"* ]]; then
+    printf '%s/%s\\n' "\$PWD" "\${path:5}"
+  elif [[ "\$path" == "\\\${PWD}" ]]; then
+    printf '%s\\n' "\$PWD"
+  elif [[ "\$path" == "\\\${PWD}/"* ]]; then
+    printf '%s/%s\\n' "\$PWD" "\${path:7}"
+  else
+    printf '%s\\n' "\$path"
+  fi
 }
 
 [[ -z "\$ENDPOINT" ]] && { err "ENDPOINT is empty (set GETAGENTS_ENDPOINT or pass --endpoint)"; exit 2; }
 [[ -z "\$API_KEY" ]] && { err "API key is required (set GETAGENTS_API_KEY or pass --api-key)"; exit 2; }
+
+PING_URL="\${ENDPOINT%/}/api/cli/ping"
+if ! curl -fsSL -H "X-API-Key: \$API_KEY" "\$PING_URL" >/dev/null; then
+  err "Upload key is invalid for \$PING_URL. Copy the latest Upload API Key from Profile and retry."
+  exit 22
+fi
 
 if [[ \${#SOURCE_DIRS[@]} -eq 0 ]]; then
   SOURCE_DIRS=("\$PWD")

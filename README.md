@@ -36,7 +36,7 @@ SESSION_SECRET=getagents-session-secret-change-me
 LOG_LEVEL=debug
 SQL_DSN=
 MAX_UPLOAD_MB=100
-ADMIN_API_KEY=user-admin-api-key-change-me
+ADMIN_API_KEY=user-adminAPIKeyChangeMe0000000000000
 ```
 
 - `URI_PREFIX` is the mounted app path.
@@ -164,7 +164,7 @@ claude       ${HOME}/.claude
 codex        ${HOME}/.codex
 gemini       ${HOME}/.gemini
 openclaw     ${HOME}/.openclaw
-hermes-agent ${HOME}/.hermes-agent
+hermes-agent ${HOME}/.hermes
 ```
 
 The generated command includes `--type`, so creating or updating an agent preserves the type metadata and backs up the matching runtime directories by default.

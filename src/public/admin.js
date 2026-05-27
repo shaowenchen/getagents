@@ -1,5 +1,5 @@
 import { escapeHtml, agentInitial, formatTime, truncate, avatarColor } from './utils.js';
-import { api, apiUpload, getAdminToken, setAdminToken, clearAdminToken, getAdminApiKey, getUploadApiKey, getDownloadApiKey, setUserApiKeys, publicUrl } from './api.js';
+import { api, apiUpload, getAdminToken, setAdminToken, clearAdminToken, getAdminApiKey, getUploadApiKey, getDownloadApiKey, setUserApiKeys, publicUrl, routePrefix } from './api.js';
 import { render, navigate } from './router.js';
 import { state, createAgentForm, resetAgentForm } from './state.js';
 
@@ -463,7 +463,13 @@ function renderAgentsTable(agents) {
 // ---- CLI upload panel ----
 
 function buildCliBaseUrl() {
-  return publicUrl();
+  const value = publicUrl();
+  if (value && !/^ACCESS_URL$/i.test(value) && !/\$\{?ACCESS_URL\}?/.test(value)) return value;
+  return `${window.location.origin}${routePrefix || ''}`;
+}
+
+function buildCliScriptUrl() {
+  return `${buildCliBaseUrl().replace(/\/+$/g, '')}/cli/upload.sh`;
 }
 
 function shellQuote(value) {
@@ -499,9 +505,8 @@ function buildAgentTypeOptions(selected) {
 }
 
 function buildCliCommand({ agentId, agentName, type, backupDirs, description, tags, enabled, isPublic } = {}) {
-  const base = buildCliBaseUrl();
   const apiKey = getUploadApiKey() || getAdminApiKey();
-  const keyPart = apiKey ? `GETAGENTS_API_KEY=${apiKey} ` : 'GETAGENTS_API_KEY=<your-api-key> ';
+  const keyPart = `GETAGENTS_API_KEY=${shellQuote(apiKey || '<your-upload-key>')}`;
   const args = [];
   args.push('--type', shellQuote(normalizeAgentType(type)));
   const dirs = backupDirs || findAgentType(type).backupDirs || [];
@@ -515,7 +520,7 @@ function buildCliCommand({ agentId, agentName, type, backupDirs, description, ta
   if (enabled !== undefined) args.push('--enabled', shellQuote(String(Boolean(enabled))));
   if (isPublic !== undefined) args.push('--public', shellQuote(String(Boolean(isPublic))));
 
-  return `${keyPart}bash <(curl -fsSL ${base}/cli/upload.sh) ${args.join(' ')}`;
+  return `${keyPart} bash <(curl -fsSL ${shellQuote(buildCliScriptUrl())}) ${args.join(' ')}`;
 }
 
 window.copyCliCommand = async (id) => {
@@ -810,7 +815,6 @@ function renderAgentFormCliCommand() {
 
 function renderAgentFormCliCommandContent() {
   const apiKey = getUploadApiKey() || getAdminApiKey();
-  const base = buildCliBaseUrl();
   const isEditing = Boolean(state.editingAgent);
 
   return `
@@ -829,12 +833,17 @@ function renderAgentFormCliCommandContent() {
     <pre class="cli-code cli-mini"><code id="agent-form-cli-cmd">${escapeHtml(buildAgentFormCliCommand())}</code></pre>
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
       <button type="button" class="btn-ghost" onclick="copyCliCommand('agent-form-cli-cmd')">Copy command</button>
-      <a class="btn-ghost" style="text-decoration:none;display:inline-block" href="${base}/cli/upload.sh" target="_blank" rel="noopener">View script</a>
+      <a class="btn-ghost" style="text-decoration:none;display:inline-block" href="${buildCliScriptUrl()}" target="_blank" rel="noopener">View script</a>
     </div>
   `;
 }
 
 window.updateAgentFormCliCommand = () => {
+  document.querySelectorAll('[data-agent-field]').forEach(input => {
+    const field = input.dataset?.agentField;
+    if (!field) return;
+    state.agentForm[field] = input.type === 'checkbox' ? input.checked : input.value;
+  });
   const panel = document.getElementById('agent-form-cli-panel');
   if (panel) panel.innerHTML = renderAgentFormCliCommandContent();
 };
@@ -843,6 +852,18 @@ window.updateAgentFormField = (field, value) => {
   state.agentForm[field] = value;
   updateAgentFormCliCommand();
 };
+
+document.addEventListener('input', (event) => {
+  const input = event.target;
+  if (!input?.matches?.('[data-agent-field]')) return;
+  updateAgentFormField(input.dataset.agentField, input.type === 'checkbox' ? input.checked : input.value);
+});
+
+document.addEventListener('change', (event) => {
+  const input = event.target;
+  if (!input?.matches?.('[data-agent-field]')) return;
+  updateAgentFormField(input.dataset.agentField, input.type === 'checkbox' ? input.checked : input.value);
+});
 
 function renderAgentForm() {
   const f = state.agentForm;

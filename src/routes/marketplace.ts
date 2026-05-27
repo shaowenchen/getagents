@@ -8,7 +8,7 @@ import type { AgentConfig } from '../shared/types.js';
 const router = Router();
 
 router.get('/', asyncHandler(async (req, res) => {
-  const { search, tag, sort } = req.query;
+  const { search, tag, type, sort } = req.query;
   let agents = await db.getPublicAgents();
 
   if (typeof search === 'string' && search.trim()) {
@@ -21,6 +21,10 @@ router.get('/', asyncHandler(async (req, res) => {
 
   if (typeof tag === 'string' && tag.trim()) {
     agents = agents.filter(a => a.tags?.includes(tag.trim()));
+  }
+
+  if (typeof type === 'string' && type.trim()) {
+    agents = agents.filter(a => a.type === type.trim());
   }
 
   if (sort === 'newest') {
@@ -36,6 +40,12 @@ router.get('/tags', asyncHandler(async (_req, res) => {
   const agents = await db.getPublicAgents();
   const tags = [...new Set(agents.flatMap(a => a.tags || []).filter(Boolean))].sort();
   res.json({ tags });
+}));
+
+router.get('/types', asyncHandler(async (_req, res) => {
+  const agents = await db.getPublicAgents();
+  const types = [...new Set(agents.map(a => a.type || 'workspace').filter(Boolean))].sort();
+  res.json({ types });
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {
@@ -59,6 +69,7 @@ router.post('/:id/install', requireAuth, asyncHandler(async (req, res) => {
   // Create a copy for the current user
   const newAgent = await db.createAgent(userId, {
     name: source.name,
+    type: source.type,
     description: source.description,
     filename: source.filename,
     fileSize: source.fileSize,

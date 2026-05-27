@@ -21,7 +21,7 @@ import { generateUserKey, generateUserKeys, hashUserKeys, type UserKeyKind } fro
 
 const log = createLogger('admin-route');
 const router = Router();
-const DEFAULT_EXTRA_ADMIN_API_KEY = 'user-admin-api-key-change-me';
+const DEFAULT_EXTRA_ADMIN_API_KEY = 'user-adminAPIKeyChangeMe0000000000000';
 
 function parseBackupDirs(value: unknown): string[] {
   if (Array.isArray(value)) return [...new Set(value.map((dir) => String(dir).trim()).filter(Boolean))];

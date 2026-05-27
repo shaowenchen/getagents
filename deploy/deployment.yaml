@@ -44,7 +44,7 @@ spec:
             - name: MAX_UPLOAD_MB
               value: "100"
             - name: ADMIN_API_KEY
-              value: "user-admin-api-key-change-me"
+              value: "user-adminAPIKeyChangeMe0000000000000"
             - name: STORAGE_DRIVER
               value: "local"
             - name: AGFS_API_URL

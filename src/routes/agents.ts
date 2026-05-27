@@ -1,4 +1,4 @@
-import { Router, type Request } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import * as db from '../db/store.js';
 import { requireAuth, requireDownloadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
@@ -48,6 +48,21 @@ async function validateAgentType(userId: string, value: unknown): Promise<string
   const allowed = new Set((await db.getManagedAgentTypes(userId)).map((item) => item.name));
   if (!allowed.has(type)) throw new Error(`Unknown type: ${type}`);
   return type;
+}
+
+async function allowPublicOrDownloadAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const agent = await db.getAgent(req.params.id);
+  if (!agent) {
+    res.status(404).json({ error: 'Agent not found' });
+    return;
+  }
+
+  (req as any).agent = agent;
+  if (agent.isPublic && agent.enabled) {
+    return next();
+  }
+
+  requireDownloadAuth(req, res, next);
 }
 
 // ---- Agent CRUD ----
@@ -153,9 +168,8 @@ router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
 
 // ---- File Download ----
 
-router.get('/:id/download', requireDownloadAuth, asyncHandler(async (req, res) => {
-  const agent = await db.getAgent(req.params.id);
-  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+router.get('/:id/download', asyncHandler(allowPublicOrDownloadAuth), asyncHandler(async (req, res) => {
+  const agent = (req as any).agent || await db.getAgent(req.params.id);
 
   const stream = await getAgentFileStream(req.params.id);
   if (!stream) return res.status(404).json({ error: 'Agent file not found' });
@@ -166,9 +180,8 @@ router.get('/:id/download', requireDownloadAuth, asyncHandler(async (req, res) =
   stream.pipe(res);
 }));
 
-router.get('/:id/download/:version', requireDownloadAuth, asyncHandler(async (req, res) => {
-  const agent = await db.getAgent(req.params.id);
-  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+router.get('/:id/download/:version', asyncHandler(allowPublicOrDownloadAuth), asyncHandler(async (req, res) => {
+  const agent = (req as any).agent || await db.getAgent(req.params.id);
 
   const version = Number(req.params.version);
   if (isNaN(version)) return res.status(400).json({ error: 'Invalid version number' });

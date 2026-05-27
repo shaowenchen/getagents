@@ -1,22 +1,24 @@
 import { escapeHtml, agentInitial, formatTime, truncate, avatarColor } from './utils.js';
-import { api } from './api.js';
+import { api, publicUrl } from './api.js';
 import { render } from './router.js';
 import { state } from './state.js';
 import { toast } from './admin.js';
 
 async function renderMarketplace() {
-  const { search, tag, sort } = state;
+  const { search, tag, marketplaceType: type, sort } = state;
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (tag) params.set('tag', tag);
+  if (type) params.set('type', type);
   if (sort && sort !== 'popular') params.set('sort', sort);
 
-  const [agents, meta] = await Promise.all([
+  const [agents, tagMeta, typeMeta] = await Promise.all([
     api(`/marketplace?${params.toString()}`),
     api('/marketplace/tags').catch(() => ({ tags: [] })),
+    api('/marketplace/types').catch(() => ({ types: [] })),
   ]);
 
-  const hasActiveFilters = search || tag;
+  const hasActiveFilters = search || tag || type;
 
   render(`
     <div class="mp-toolbar">
@@ -29,16 +31,12 @@ async function renderMarketplace() {
       <div class="mp-filter-group">
         <select class="mp-select" onchange="marketplaceFilter('tag', this.value)">
           <option value="">All Tags</option>
-          ${meta.tags.map(t => `<option value="${escapeHtml(t)}" ${tag === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
+          ${tagMeta.tags.map(t => `<option value="${escapeHtml(t)}" ${tag === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
         </select>
-        <select class="mp-select" onchange="marketplaceFilter('sort', this.value)">
-          <option value="popular" ${sort === 'popular' ? 'selected' : ''}>Most Popular</option>
-          <option value="newest" ${sort === 'newest' ? 'selected' : ''}>Newest</option>
-          <option value="name" ${sort === 'name' ? 'selected' : ''}>Name A-Z</option>
+        <select class="mp-select" onchange="marketplaceFilter('type', this.value)">
+          <option value="">All Types</option>
+          ${typeMeta.types.map(t => `<option value="${escapeHtml(t)}" ${type === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
         </select>
-      </div>
-      <div class="mp-nav-btns">
-        <button class="btn-ghost" onclick="navigateTo('/agents')">My Agents</button>
       </div>
     </div>
 
@@ -47,6 +45,7 @@ async function renderMarketplace() {
       <span class="mp-filter-label">Active filters:</span>
       ${search ? `<span class="mp-filter-chip">Search: "${escapeHtml(search)}" <button onclick="marketplaceSearch('')">&times;</button></span>` : ''}
       ${tag ? `<span class="mp-filter-chip">Tag: ${escapeHtml(tag)} <button onclick="marketplaceFilter('tag','')">&times;</button></span>` : ''}
+      ${type ? `<span class="mp-filter-chip">Type: ${escapeHtml(type)} <button onclick="marketplaceFilter('type','')">&times;</button></span>` : ''}
       <button class="mp-clear-all" onclick="clearAllFilters()">Clear all</button>
     </div>
     ` : ''}
@@ -72,11 +71,14 @@ function renderMarketplaceCard(agent) {
   const color = avatarColor(agent.name);
   const tags = (agent.tags || []).slice(0, 3).map(t => `<span class="mp-tag">${escapeHtml(t)}</span>`).join('');
   const fileLabel = formatFileSize(agent.fileSize || 0);
+  const typeLabel = agent.type || 'workspace';
 
   return `
     <div class="mp-card">
+      <div class="mp-card-bg" aria-hidden="true">agent</div>
       <div class="mp-card-header">
         <div class="mp-card-avatar" style="background:${color}">${initial}</div>
+        <span class="mp-type-badge">${escapeHtml(typeLabel)}</span>
       </div>
       <div class="mp-card-body">
         <h3 class="mp-card-name">${escapeHtml(agent.name)}</h3>
@@ -84,26 +86,19 @@ function renderMarketplaceCard(agent) {
         ${tags ? `<div class="mp-card-tags">${tags}</div>` : ''}
       </div>
       <div class="mp-card-meta">
-        <span class="mp-meta-item" title="File size">
+        <span class="mp-meta-item" title="Package size">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          ${escapeHtml(agent.filename ? truncate(agent.filename, 18) : '—')}
+          ${fileLabel}
         </span>
         <span class="mp-meta-item" title="Downloads">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           ${agent.downloadCount || 0}
         </span>
-        <span class="mp-meta-item" title="Likes">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-          ${agent.likesCount || 0}
-        </span>
       </div>
       <div class="mp-card-footer">
-        <button class="mp-btn-install" onclick="installFromMarketplace('${agent.id}')">
+        <button class="mp-btn-install" onclick="getFromMarketplace('${agent.id}')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Install
-        </button>
-        <button class="mp-btn-like" onclick="likeAgent('${agent.id}')" title="Like">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          Get
         </button>
       </div>
     </div>
@@ -119,6 +114,15 @@ function formatFileSize(bytes) {
   return `${s.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function restoreCommand(id) {
+  const url = publicUrl(`/api/agents/${id}/download`);
+  return `bash -c ${shellQuote(`set -euo pipefail; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT; curl -fsSL ${shellQuote(url)} -o "$tmp/agent.zip"; unzip -o "$tmp/agent.zip" -d .`)}`;
+}
+
 // ---- Event handlers ----
 
 window.marketplaceSearch = (value) => {
@@ -128,6 +132,7 @@ window.marketplaceSearch = (value) => {
 
 window.marketplaceFilter = (key, value) => {
   if (key === 'tag') state.marketplaceTag = value;
+  else if (key === 'type') state.marketplaceType = value;
   else if (key === 'sort') state.marketplaceSort = value;
   renderMarketplace();
 };
@@ -135,25 +140,25 @@ window.marketplaceFilter = (key, value) => {
 window.clearAllFilters = () => {
   state.marketplaceSearch = '';
   state.marketplaceTag = '';
+  state.marketplaceType = '';
   renderMarketplace();
 };
 
-window.installFromMarketplace = async (id) => {
+window.getFromMarketplace = async (id) => {
+  const command = restoreCommand(id);
   try {
-    await api(`/marketplace/${id}/install`, { method: 'POST', admin: true });
-    toast('Agent installed! Check My Agents.');
-  } catch (e) {
-    if (e.status === 401) toast('Sign in first to install agents.');
-    else alert(e.message);
-  }
-};
-
-window.likeAgent = async (id) => {
-  try {
-    await api(`/marketplace/${id}/like`, { method: 'POST' });
-    await renderMarketplace();
-  } catch (e) {
-    // silent
+    await navigator.clipboard.writeText(command);
+    toast('Restore command copied');
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = command;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    toast('Restore command copied');
   }
 };
 

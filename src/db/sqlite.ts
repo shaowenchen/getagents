@@ -14,16 +14,8 @@ const db = new Database(databasePath);
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
 
-// Drop and recreate for clean schema migration
-db.exec(`DROP TABLE IF EXISTS agent_imports`);
-db.exec(`DROP TABLE IF EXISTS agent_versions`);
-db.exec(`DROP TABLE IF EXISTS agents`);
-db.exec(`DROP TABLE IF EXISTS managed_agent_types`);
-db.exec(`DROP TABLE IF EXISTS managed_tags`);
-db.exec(`DROP TABLE IF EXISTS users`);
-
 db.exec(`
-  CREATE TABLE users (
+  CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     login_key_hash TEXT NOT NULL,
@@ -36,7 +28,7 @@ db.exec(`
     updated_at INTEGER NOT NULL
   );
 
-  CREATE TABLE managed_tags (
+  CREATE TABLE IF NOT EXISTS managed_tags (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -45,7 +37,7 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
-  CREATE TABLE managed_agent_types (
+  CREATE TABLE IF NOT EXISTS managed_agent_types (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -55,7 +47,7 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
-  CREATE TABLE agents (
+  CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -77,7 +69,7 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
-  CREATE TABLE agent_versions (
+  CREATE TABLE IF NOT EXISTS agent_versions (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
     version INTEGER NOT NULL,
@@ -87,9 +79,9 @@ db.exec(`
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
   );
 
-  CREATE INDEX idx_agent_versions_agent ON agent_versions(agent_id, version DESC);
+  CREATE INDEX IF NOT EXISTS idx_agent_versions_agent ON agent_versions(agent_id, version DESC);
 
-  CREATE TABLE agent_imports (
+  CREATE TABLE IF NOT EXISTS agent_imports (
     id TEXT PRIMARY KEY,
     source_type TEXT NOT NULL,
     source_url TEXT,
@@ -98,6 +90,42 @@ db.exec(`
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
   );
 `);
+
+function sqliteColumns(table: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return new Set(rows.map(row => row.name));
+}
+
+function ensureSqliteColumn(table: string, column: string, definition: string): void {
+  if (sqliteColumns(table).has(column)) return;
+  db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+}
+
+function migrateSchema(): void {
+  ensureSqliteColumn('users', 'login_key_hash', 'TEXT');
+  ensureSqliteColumn('users', 'upload_key_hash', 'TEXT');
+  ensureSqliteColumn('users', 'download_key_hash', 'TEXT');
+  ensureSqliteColumn('users', 'login_key', 'TEXT');
+  ensureSqliteColumn('users', 'upload_key', 'TEXT');
+  ensureSqliteColumn('users', 'download_key', 'TEXT');
+  ensureSqliteColumn('agents', 'agent_type', "TEXT NOT NULL DEFAULT 'workspace'");
+  ensureSqliteColumn('agents', 'is_public', 'INTEGER NOT NULL DEFAULT 0');
+  ensureSqliteColumn('agents', 'likes_count', 'INTEGER NOT NULL DEFAULT 0');
+  ensureSqliteColumn('agents', 'share_token', 'TEXT');
+  ensureSqliteColumn('agents', 'share_password', 'TEXT');
+
+  const userColumns = sqliteColumns('users');
+  if (userColumns.has('password_hash')) {
+    db.prepare(`
+      UPDATE users
+      SET login_key_hash = COALESCE(login_key_hash, password_hash),
+          upload_key_hash = COALESCE(upload_key_hash, password_hash),
+          download_key_hash = COALESCE(download_key_hash, password_hash)
+    `).run();
+  }
+}
+
+migrateSchema();
 
 function rowToAgent(row: Record<string, unknown>): AgentConfig {
   return {
@@ -183,7 +211,7 @@ const defaultAgentTypes = [
   { name: 'codex', backupDirs: ['${HOME}/.codex'] },
   { name: 'gemini', backupDirs: ['${HOME}/.gemini'] },
   { name: 'openclaw', backupDirs: ['${HOME}/.openclaw'] },
-  { name: 'hermes-agent', backupDirs: ['${HOME}/.hermes-agent'] },
+  { name: 'hermes-agent', backupDirs: ['${HOME}/.hermes'] },
 ];
 
 function normalizeBackupDirs(value: string[]): string[] {

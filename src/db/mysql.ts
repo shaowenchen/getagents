@@ -19,16 +19,8 @@ async function ensureReady(): Promise<void> {
 async function init(): Promise<void> {
   const db = requirePool();
 
-  // Drop and recreate for clean schema
-  await db.query(`DROP TABLE IF EXISTS agent_imports`);
-  await db.query(`DROP TABLE IF EXISTS agent_versions`);
-  await db.query(`DROP TABLE IF EXISTS agents`);
-  await db.query(`DROP TABLE IF EXISTS managed_agent_types`);
-  await db.query(`DROP TABLE IF EXISTS managed_tags`);
-  await db.query(`DROP TABLE IF EXISTS users`);
-
   await db.query(`
-    CREATE TABLE users (
+    CREATE TABLE IF NOT EXISTS users (
       id VARCHAR(64) PRIMARY KEY,
       username VARCHAR(255) NOT NULL UNIQUE,
       login_key_hash TEXT NOT NULL,
@@ -43,7 +35,7 @@ async function init(): Promise<void> {
   `);
 
   await db.query(`
-    CREATE TABLE managed_tags (
+    CREATE TABLE IF NOT EXISTS managed_tags (
       id VARCHAR(64) PRIMARY KEY,
       user_id VARCHAR(64) NOT NULL,
       name VARCHAR(64) NOT NULL,
@@ -54,7 +46,7 @@ async function init(): Promise<void> {
   `);
 
   await db.query(`
-    CREATE TABLE managed_agent_types (
+    CREATE TABLE IF NOT EXISTS managed_agent_types (
       id VARCHAR(64) PRIMARY KEY,
       user_id VARCHAR(64) NOT NULL,
       name VARCHAR(64) NOT NULL,
@@ -66,7 +58,7 @@ async function init(): Promise<void> {
   `);
 
   await db.query(`
-    CREATE TABLE agents (
+    CREATE TABLE IF NOT EXISTS agents (
       id VARCHAR(64) PRIMARY KEY,
       user_id VARCHAR(64) NOT NULL,
       name VARCHAR(255) NOT NULL,
@@ -94,7 +86,7 @@ async function init(): Promise<void> {
   `);
 
   await db.query(`
-    CREATE TABLE agent_versions (
+    CREATE TABLE IF NOT EXISTS agent_versions (
       id VARCHAR(64) PRIMARY KEY,
       agent_id VARCHAR(64) NOT NULL,
       version INT NOT NULL,
@@ -107,7 +99,7 @@ async function init(): Promise<void> {
   `);
 
   await db.query(`
-    CREATE TABLE agent_imports (
+    CREATE TABLE IF NOT EXISTS agent_imports (
       id VARCHAR(64) PRIMARY KEY,
       source_type VARCHAR(32) NOT NULL,
       source_url TEXT,
@@ -116,6 +108,44 @@ async function init(): Promise<void> {
       CONSTRAINT fk_imports_agent FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  await migrateSchema(db);
+}
+
+async function mysqlColumnExists(db: Pool, table: string, column: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1`,
+    [table, column]
+  );
+  return rows.length > 0;
+}
+
+async function ensureMysqlColumn(db: Pool, table: string, column: string, definition: string): Promise<void> {
+  if (await mysqlColumnExists(db, table, column)) return;
+  await db.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+async function migrateSchema(db: Pool): Promise<void> {
+  await ensureMysqlColumn(db, 'users', 'login_key_hash', 'TEXT');
+  await ensureMysqlColumn(db, 'users', 'upload_key_hash', 'TEXT');
+  await ensureMysqlColumn(db, 'users', 'download_key_hash', 'TEXT');
+  await ensureMysqlColumn(db, 'users', 'login_key', 'TEXT');
+  await ensureMysqlColumn(db, 'users', 'upload_key', 'TEXT');
+  await ensureMysqlColumn(db, 'users', 'download_key', 'TEXT');
+  await ensureMysqlColumn(db, 'agents', 'agent_type', "VARCHAR(32) NOT NULL DEFAULT 'workspace'");
+  await ensureMysqlColumn(db, 'agents', 'is_public', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureMysqlColumn(db, 'agents', 'likes_count', 'INT NOT NULL DEFAULT 0');
+  await ensureMysqlColumn(db, 'agents', 'share_token', 'VARCHAR(64)');
+  await ensureMysqlColumn(db, 'agents', 'share_password', 'VARCHAR(255)');
+
+  if (await mysqlColumnExists(db, 'users', 'password_hash')) {
+    await db.query(`
+      UPDATE users
+      SET login_key_hash = COALESCE(login_key_hash, password_hash),
+          upload_key_hash = COALESCE(upload_key_hash, password_hash),
+          download_key_hash = COALESCE(download_key_hash, password_hash)
+    `);
+  }
 }
 
 function requirePool(): Pool {
@@ -234,7 +264,7 @@ const defaultAgentTypes = [
   { name: 'codex', backupDirs: ['${HOME}/.codex'] },
   { name: 'gemini', backupDirs: ['${HOME}/.gemini'] },
   { name: 'openclaw', backupDirs: ['${HOME}/.openclaw'] },
-  { name: 'hermes-agent', backupDirs: ['${HOME}/.hermes-agent'] },
+  { name: 'hermes-agent', backupDirs: ['${HOME}/.hermes'] },
 ];
 
 function normalizeBackupDirs(value: string[]): string[] {

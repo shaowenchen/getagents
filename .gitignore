@@ -63,3 +63,5 @@ src/public/vendor/
 *.db
 *.db-shm
 *.db-wal
+
+.env

@@ -49,7 +49,7 @@ async function validateAgentType(userId: string, value: unknown): Promise<string
   return type;
 }
 
-router.get('/ping', requireAuth, (req: Request, res: Response) => {
+router.get('/ping', requireUploadAuth, (req: Request, res: Response) => {
   res.json({ ok: true, userId: (req as any).userId, authVia: (req as any).authVia || 'jwt' });
 });
 

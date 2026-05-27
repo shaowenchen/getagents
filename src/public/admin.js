@@ -151,13 +151,16 @@ function isSystemAdminUser() {
 
 function updateUserNavInfo() {
   const userInfo = document.getElementById('nav-user-info');
+  const loginLink = document.getElementById('nav-login-link');
   if (!userInfo) return;
   if (!state.currentUser) {
+    if (loginLink) loginLink.style.display = '';
     userInfo.style.display = 'none';
     userInfo.classList.remove('open');
     userInfo.innerHTML = '';
     return;
   }
+  if (loginLink) loginLink.style.display = 'none';
   userInfo.style.display = 'block';
   userInfo.innerHTML = `
     <button class="user-menu-button" onclick="toggleUserMenu(event)" title="${escapeHtml(currentUsername())}" aria-label="User menu">

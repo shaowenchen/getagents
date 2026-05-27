@@ -498,7 +498,7 @@ function buildAgentTypeOptions(selected) {
   `).join('');
 }
 
-function buildCliCommand({ agentId, agentName, type, backupDirs, description, tags } = {}) {
+function buildCliCommand({ agentId, agentName, type, backupDirs, description, tags, enabled, isPublic } = {}) {
   const base = buildCliBaseUrl();
   const apiKey = getUploadApiKey() || getAdminApiKey();
   const keyPart = apiKey ? `GETAGENTS_API_KEY=${apiKey} ` : 'GETAGENTS_API_KEY=<your-api-key> ';
@@ -512,6 +512,8 @@ function buildCliCommand({ agentId, agentName, type, backupDirs, description, ta
 
   if (description) args.push('--description', shellQuote(description));
   if (tags?.length) args.push('--tags', shellQuote(tags.join(',')));
+  if (enabled !== undefined) args.push('--enabled', shellQuote(String(Boolean(enabled))));
+  if (isPublic !== undefined) args.push('--public', shellQuote(String(Boolean(isPublic))));
 
   return `${keyPart}bash <(curl -fsSL ${base}/cli/upload.sh) ${args.join(' ')}`;
 }
@@ -781,14 +783,21 @@ function buildAgentFormCliCommand() {
   const type = normalizeAgentType(state.agentForm.type);
   if (state.editingAgent) return buildCliCommand({ agentId: state.editingAgent, type });
   const name = String(state.agentForm.name || '').trim();
-  const description = String(state.agentForm.description || '').trim();
-  const tags = Array.isArray(state.agentForm.tags) ? state.agentForm.tags : [];
-  return buildCliCommand({ agentName: name, type, description, tags });
+  return buildCliCommand({ agentName: name, type });
 }
 
-function hasRequiredAgentFormInfo() {
-  if (state.editingAgent) return true;
-  return Boolean(String(state.agentForm.name || '').trim());
+function renderCliCommandParams() {
+  const type = normalizeAgentType(state.agentForm.type);
+  const typeInfo = findAgentType(type);
+  const name = String(state.agentForm.name || '').trim() || '<agent-name>';
+  const sources = (typeInfo.backupDirs || []).join(', ') || '${PWD}';
+  return `
+    <div class="cli-param-list">
+      <span class="cli-param-chip"><span>name</span>${escapeHtml(name)}</span>
+      <span class="cli-param-chip"><span>type</span>${escapeHtml(type)}</span>
+      <span class="cli-param-chip"><span>source</span>${escapeHtml(sources)}</span>
+    </div>
+  `;
 }
 
 function renderAgentFormCliCommand() {
@@ -803,22 +812,15 @@ function renderAgentFormCliCommandContent() {
   const apiKey = getUploadApiKey() || getAdminApiKey();
   const base = buildCliBaseUrl();
   const isEditing = Boolean(state.editingAgent);
-  if (!hasRequiredAgentFormInfo()) {
-    return `
-      <div class="cli-step-label">Upload from CLI</div>
-      <p class="text-muted" style="margin:0;font-size:0.82rem">
-        Fill in Name first, then the upload command will be generated here.
-      </p>
-    `;
-  }
 
   return `
-    <div class="cli-step-label">${isEditing ? 'Update from CLI' : 'Upload from CLI'}</div>
+    <div class="cli-step-label">${isEditing ? 'Update from CLI' : 'Generated upload command'}</div>
     <p class="text-muted" style="margin:0 0 0.5rem;font-size:0.82rem">
       ${isEditing
         ? `Run this in the agent runtime environment to upload ${escapeHtml(agentTypeLabel(state.agentForm.type))} files from ${escapeHtml(agentTypeSource(state.agentForm.type))}.`
-        : `Run this in the agent runtime environment to upload ${escapeHtml(agentTypeLabel(state.agentForm.type))} files from ${escapeHtml(agentTypeSource(state.agentForm.type))}.`}
+        : `This page only generates CLI upload parameters. Run the command in the agent runtime environment to create or update by name.`}
     </p>
+    ${isEditing ? '' : renderCliCommandParams()}
     ${apiKey ? '' : `
       <div style="margin-bottom:0.5rem;padding:0.5rem 0.6rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;color:#9a3412;font-size:0.8rem">
         Replace <code>&lt;your-api-key&gt;</code> with your API key, or sign in again to inject it automatically.
@@ -837,36 +839,40 @@ window.updateAgentFormCliCommand = () => {
   if (panel) panel.innerHTML = renderAgentFormCliCommandContent();
 };
 
+window.updateAgentFormField = (field, value) => {
+  state.agentForm[field] = value;
+  updateAgentFormCliCommand();
+};
+
 function renderAgentForm() {
   const f = state.agentForm;
   const selectedTags = Array.isArray(f.tags) ? f.tags : [];
   const tagOptions = state.tagOptions || [];
+  const isEditing = Boolean(state.editingAgent);
   return `
     <div class="card" style="margin-bottom:1rem">
-      <h3>${state.editingAgent ? 'Edit Agent' : 'New Agent'}</h3>
+      <h3>${isEditing ? 'Edit Agent' : 'New Agent'}</h3>
       <div class="form-group">
         <label class="field">
           <span class="field-label">Name<span class="field-required">*</span></span>
-          <input data-agent-field="name" placeholder="e.g. My Assistant" value="${escapeHtml(f.name)}" oninput="agentForm.name=this.value; updateAgentFormCliCommand()">
+          <input data-agent-field="name" placeholder="e.g. My Assistant" value="${escapeHtml(f.name)}" oninput="updateAgentFormField('name', this.value)">
         </label>
         <label class="field">
           <span class="field-label">Type<span class="field-required">*</span></span>
-          <select data-agent-field="type" onchange="agentForm.type=this.value; updateAgentFormCliCommand()"
-            style="padding:0.55rem 0.65rem;border:1px solid var(--border-strong);border-radius:9px;background:white">
+          <select class="form-select" data-agent-field="type" onchange="updateAgentFormField('type', this.value)">
             ${buildAgentTypeOptions(f.type)}
           </select>
         </label>
+        ${isEditing ? `
         <label class="field">
           <span class="field-label">Description<span class="field-optional">optional</span></span>
-          <input data-agent-field="description" placeholder="What this agent does" value="${escapeHtml(f.description)}" oninput="agentForm.description=this.value; updateAgentFormCliCommand()">
+          <input data-agent-field="description" placeholder="What this agent does" value="${escapeHtml(f.description)}" oninput="updateAgentFormField('description', this.value)">
         </label>
-        ${state.editingAgent ? `
         <label class="field">
           <span class="field-label">New ZIP File<span class="field-optional">version upgrade</span></span>
           <input type="file" id="agent-file-input" accept=".zip" onchange="handleAgentFileChange(event)">
           <span class="text-muted" style="font-size:0.75rem">Upload a new ZIP to create a new version. Leave empty to only change metadata.</span>
         </label>
-        ` : ''}
         <label class="field">
           <span class="field-label">Tags<span class="field-optional">optional</span></span>
           <div class="tag-option-list">
@@ -878,13 +884,16 @@ function renderAgentForm() {
             `).join('') : '<span class="text-muted" style="font-size:0.82rem">Add tags in the Tags section above before assigning them.</span>'}
           </div>
         </label>
-        <label><input data-agent-field="enabled" type="checkbox" ${f.enabled ? 'checked' : ''} onchange="agentForm.enabled=this.checked"> Enabled</label>
-        <label><input data-agent-field="isPublic" type="checkbox" ${f.isPublic ? 'checked' : ''} onchange="agentForm.isPublic=this.checked"> Publish to Marketplace</label>
+        <label><input data-agent-field="enabled" type="checkbox" ${f.enabled ? 'checked' : ''} onchange="updateAgentFormField('enabled', this.checked)"> Enabled</label>
+        <label><input data-agent-field="isPublic" type="checkbox" ${f.isPublic ? 'checked' : ''} onchange="updateAgentFormField('isPublic', this.checked)"> Publish to Marketplace</label>
+        ` : ''}
         ${renderAgentFormCliCommand()}
+        ${isEditing ? `
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
-          ${state.editingAgent ? '<button class="btn-primary" onclick="saveAgent()">Update</button>' : ''}
+          <button class="btn-primary" onclick="saveAgent()">Update</button>
           <button class="btn-ghost" onclick="cancelEdit()">Cancel</button>
         </div>
+        ` : ''}
       </div>
     </div>
   `;

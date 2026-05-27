@@ -11,7 +11,6 @@ const state = {
   adminTab: 'agents',
   editingAgent: null,
   showAgentForm: false,
-  tagOptions: [],
   typeOptions: [],
   userOptions: [],
   resetApiKeyResult: null,
@@ -22,12 +21,13 @@ const state = {
   detailAgentId: null,
   detailVersions: [],
   detailDiff: null,
+  detailExpandedRestoreVersion: null,
 
   // Marketplace
   marketplaceSearch: '',
-  marketplaceTag: '',
   marketplaceType: '',
   marketplaceSort: 'popular',
+  marketplaceExpandedAgentId: null,
 
   // Toast
   toasts: [],
@@ -39,8 +39,6 @@ function createAgentForm() {
     type: 'workspace',
     description: '',
     enabled: true,
-    tags: [],
-    isPublic: false,
   };
 }
 

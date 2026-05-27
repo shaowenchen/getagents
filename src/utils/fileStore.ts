@@ -325,12 +325,28 @@ async function deleteLocalAgentFiles(agentId: string): Promise<void> {
   }
 }
 
+async function deleteLocalAgentVersionFile(agentId: string, version: number): Promise<void> {
+  for (const path of [
+    getVersionPath(agentId, version),
+    join(getLegacyAgentDir(agentId), versionFileName(version)),
+  ]) {
+    if (existsSync(path)) rmSync(path, { force: true });
+  }
+}
+
 async function deleteAgfsAgentFiles(agentId: string): Promise<void> {
   for (const scope of ['uploads', 'downloads', 'agents'] as const) {
     const entries = await listAgfsAgentFiles(scope, agentId);
     for (const entry of entries) {
       await fetch(agfsUrl('files', agfsPath(scope, agentId, entry)), { method: 'DELETE' }).catch(() => undefined);
     }
+  }
+}
+
+async function deleteAgfsAgentVersionFile(agentId: string, version: number): Promise<void> {
+  const fileName = versionFileName(version);
+  for (const scope of ['uploads', 'agents'] as const) {
+    await fetch(agfsUrl('files', agfsPath(scope, agentId, fileName)), { method: 'DELETE' }).catch(() => undefined);
   }
 }
 
@@ -347,10 +363,30 @@ async function deleteS3AgentFiles(agentId: string): Promise<void> {
   }));
 }
 
+async function deleteS3AgentVersionFile(agentId: string, version: number): Promise<void> {
+  const fileName = versionFileName(version);
+  await s3.send(new DeleteObjectsCommand({
+    Bucket: S3_BUCKET,
+    Delete: {
+      Objects: [
+        { Key: s3UploadKey(agentId, fileName) },
+        { Key: s3Key(agentId, fileName) },
+      ],
+      Quiet: true,
+    },
+  }));
+}
+
 async function deleteAgentFiles(agentId: string): Promise<void> {
   if (STORAGE_DRIVER === 'agfs') return deleteAgfsAgentFiles(agentId);
   if (STORAGE_DRIVER === 's3') return deleteS3AgentFiles(agentId);
   return deleteLocalAgentFiles(agentId);
+}
+
+async function deleteAgentVersionFile(agentId: string, version: number): Promise<void> {
+  if (STORAGE_DRIVER === 'agfs') return deleteAgfsAgentVersionFile(agentId, version);
+  if (STORAGE_DRIVER === 's3') return deleteS3AgentVersionFile(agentId, version);
+  return deleteLocalAgentVersionFile(agentId, version);
 }
 
 async function getLocalAgentFileStream(agentId: string, version?: number): Promise<AgentFileStream | null> {
@@ -427,5 +463,6 @@ export {
   getAgentFilePath,
   copyAgentFiles,
   deleteAgentFiles,
+  deleteAgentVersionFile,
   getAgentFileStream,
 };

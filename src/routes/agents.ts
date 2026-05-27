@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import * as db from '../db/store.js';
 import { requireAuth, requireDownloadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import { saveAgentFile, getAgentFileStream, copyAgentFiles, deleteAgentFiles } from '../utils/fileStore.js';
+import { saveAgentFile, getAgentFileStream, copyAgentFiles, deleteAgentFiles, deleteAgentVersionFile } from '../utils/fileStore.js';
 import { inferAccessUrl, normalizeRoutePrefix } from '../utils/accessUrl.js';
 import type { AgentConfig } from '../shared/types.js';
 import crypto from 'crypto';
@@ -58,8 +58,14 @@ async function allowPublicOrDownloadAuth(req: Request, res: Response, next: Next
   }
 
   (req as any).agent = agent;
-  if (agent.isPublic && agent.enabled) {
-    return next();
+  if (agent.enabled) {
+    const requestedVersion = req.params.version ? Number(req.params.version) : undefined;
+    const published = await db.getPublishedVersion(req.params.id);
+    const hasAuthKey = Boolean(req.headers.authorization || req.headers['x-api-key'] || req.query.apiKey || req.query.downloadKey);
+    if (published && !hasAuthKey && (requestedVersion === undefined || published.version === requestedVersion)) {
+      (req as any).publicVersion = published.version;
+      return next();
+    }
   }
 
   requireDownloadAuth(req, res, next);
@@ -81,7 +87,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
 router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (req, res) => {
   const userId = (req as any).userId;
-  const { name, description, tags, isPublic, avatar } = req.body;
+  const { name, description, tags, avatar } = req.body;
   if (!name) {
     return res.status(400).json({ error: 'name is required' });
   }
@@ -111,7 +117,7 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
     enabled,
     avatar,
     tags: selectedTags,
-    isPublic: isPublic === 'true' || isPublic === true,
+    isPublic: false,
   });
 
   // Save file to disk (version 1)
@@ -137,7 +143,6 @@ router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (
   }
   if (req.body.description !== undefined) patch.description = req.body.description;
   if (req.body.enabled !== undefined) patch.enabled = req.body.enabled === 'true' || req.body.enabled === true;
-  if (req.body.isPublic !== undefined) patch.isPublic = req.body.isPublic === 'true' || req.body.isPublic === true;
   if (req.body.tags !== undefined) {
     try {
       patch.tags = await validateManagedTags((req as any).userId, req.body.tags);
@@ -170,13 +175,15 @@ router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
 
 router.get('/:id/download', asyncHandler(allowPublicOrDownloadAuth), asyncHandler(async (req, res) => {
   const agent = (req as any).agent || await db.getAgent(req.params.id);
+  const publicVersion = (req as any).publicVersion;
+  const versionRecord = publicVersion ? await db.getVersion(req.params.id, publicVersion) : undefined;
 
-  const stream = await getAgentFileStream(req.params.id);
+  const stream = await getAgentFileStream(req.params.id, publicVersion);
   if (!stream) return res.status(404).json({ error: 'Agent file not found' });
 
   res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="${agent.filename}"`);
-  res.setHeader('Content-Length', agent.fileSize);
+  res.setHeader('Content-Disposition', `attachment; filename="${versionRecord ? `${agent.name}-v${publicVersion}.zip` : agent.filename}"`);
+  res.setHeader('Content-Length', versionRecord?.snapshot.fileSize || agent.fileSize);
   stream.pipe(res);
 }));
 
@@ -218,12 +225,30 @@ router.post('/:id/versions', requireAuth, asyncHandler(async (req, res) => {
   res.status(201).json(version);
 }));
 
-router.post('/:id/rollback', requireAuth, asyncHandler(async (req, res) => {
-  const { version } = req.body;
-  if (version === undefined) return res.status(400).json({ error: 'version is required' });
-  const agent = await db.rollbackToVersion(req.params.id, Number(version));
-  if (!agent) return res.status(404).json({ error: 'Agent or version not found' });
-  res.json(agent);
+router.post('/:id/versions/:version/publish', requireAuth, asyncHandler(async (req, res) => {
+  const agent = await db.getAgent(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+  const version = Number(req.params.version);
+  if (isNaN(version)) return res.status(400).json({ error: 'Invalid version number' });
+
+  const published = await db.publishVersion(req.params.id, version);
+  if (!published) return res.status(404).json({ error: 'Version not found' });
+  res.json(published);
+}));
+
+router.delete('/:id/versions/:version', requireAuth, asyncHandler(async (req, res) => {
+  const agent = await db.getAgent(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+  const version = Number(req.params.version);
+  if (isNaN(version)) return res.status(400).json({ error: 'Invalid version number' });
+
+  const deleted = await db.deleteVersion(req.params.id, version);
+  if (!deleted) return res.status(404).json({ error: 'Version not found' });
+
+  await deleteAgentVersionFile(req.params.id, version);
+  res.status(204).end();
 }));
 
 router.get('/:id/diff', asyncHandler(async (req, res) => {

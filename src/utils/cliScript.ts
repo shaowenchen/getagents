@@ -35,7 +35,6 @@ DESCRIPTION=""
 TAGS=""
 COMMENT=""
 ENABLED=""
-IS_PUBLIC=""
 
 usage() {
   cat <<EOF
@@ -51,7 +50,6 @@ Usage: bash upload.sh [options]
   -t, --tags "a,b,c"       Comma-separated tags
       --comment TEXT       Version comment (shown in version history)
       --enabled true|false
-      --public  true|false
   -h, --help               Show this help
 
 Examples:
@@ -83,7 +81,6 @@ while [[ \$# -gt 0 ]]; do
     -t|--tags)         TAGS="\${2:-}"; shift 2 ;;
     --comment)         COMMENT="\${2:-}"; shift 2 ;;
     --enabled)         ENABLED="\${2:-}"; shift 2 ;;
-    --public)          IS_PUBLIC="\${2:-}"; shift 2 ;;
     -h|--help)         usage; exit 0 ;;
     *)                 echo "Unknown option: \$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -227,7 +224,6 @@ CURL_ARGS=(-fsSL -X POST
 [[ -n "\$TAGS" ]]         && CURL_ARGS+=(-F "tags=\$TAGS")
 [[ -n "\$COMMENT" ]]      && CURL_ARGS+=(-F "comment=\$COMMENT")
 [[ -n "\$ENABLED" ]]      && CURL_ARGS+=(-F "enabled=\$ENABLED")
-[[ -n "\$IS_PUBLIC" ]]    && CURL_ARGS+=(-F "isPublic=\$IS_PUBLIC")
 
 UPLOAD_URL="\${ENDPOINT%/}/api/cli/upload"
 info "Uploading to \$UPLOAD_URL ..."

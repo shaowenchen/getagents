@@ -13,6 +13,7 @@ export interface AgentConfig {
   enabled: boolean;
   tags?: string[];
   isPublic: boolean;
+  publishedVersion?: number;
   downloadCount: number;
   likesCount: number;
   shareToken?: string;
@@ -27,6 +28,7 @@ export interface AgentVersion {
   version: number;
   snapshot: AgentSnapshot;
   comment?: string;
+  isPublished: boolean;
   createdAt: number;
 }
 

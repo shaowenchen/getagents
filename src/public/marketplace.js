@@ -5,20 +5,18 @@ import { state } from './state.js';
 import { toast } from './admin.js';
 
 async function renderMarketplace() {
-  const { search, tag, marketplaceType: type, sort } = state;
+  const { search, marketplaceType: type, sort } = state;
   const params = new URLSearchParams();
   if (search) params.set('search', search);
-  if (tag) params.set('tag', tag);
   if (type) params.set('type', type);
   if (sort && sort !== 'popular') params.set('sort', sort);
 
-  const [agents, tagMeta, typeMeta] = await Promise.all([
+  const [agents, typeMeta] = await Promise.all([
     api(`/marketplace?${params.toString()}`),
-    api('/marketplace/tags').catch(() => ({ tags: [] })),
     api('/marketplace/types').catch(() => ({ types: [] })),
   ]);
 
-  const hasActiveFilters = search || tag || type;
+  const hasActiveFilters = search || type;
 
   render(`
     <div class="mp-toolbar">
@@ -29,10 +27,6 @@ async function renderMarketplace() {
         ${search ? `<button class="mp-search-clear" onclick="marketplaceSearch('')">&times;</button>` : ''}
       </div>
       <div class="mp-filter-group">
-        <select class="mp-select" onchange="marketplaceFilter('tag', this.value)">
-          <option value="">All Tags</option>
-          ${tagMeta.tags.map(t => `<option value="${escapeHtml(t)}" ${tag === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
-        </select>
         <select class="mp-select" onchange="marketplaceFilter('type', this.value)">
           <option value="">All Types</option>
           ${typeMeta.types.map(t => `<option value="${escapeHtml(t)}" ${type === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
@@ -44,7 +38,6 @@ async function renderMarketplace() {
     <div class="mp-active-filters">
       <span class="mp-filter-label">Active filters:</span>
       ${search ? `<span class="mp-filter-chip">Search: "${escapeHtml(search)}" <button onclick="marketplaceSearch('')">&times;</button></span>` : ''}
-      ${tag ? `<span class="mp-filter-chip">Tag: ${escapeHtml(tag)} <button onclick="marketplaceFilter('tag','')">&times;</button></span>` : ''}
       ${type ? `<span class="mp-filter-chip">Type: ${escapeHtml(type)} <button onclick="marketplaceFilter('type','')">&times;</button></span>` : ''}
       <button class="mp-clear-all" onclick="clearAllFilters()">Clear all</button>
     </div>
@@ -60,7 +53,7 @@ async function renderMarketplace() {
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#c4c9d4" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
       </div>
       <h3>No agents found</h3>
-      <p>${hasActiveFilters ? 'Try adjusting your filters or search terms.' : 'No public agents have been published yet. Be the first!'}</p>
+      <p>${hasActiveFilters ? 'Try adjusting your filters or search terms.' : 'No released agents have been published yet. Be the first!'}</p>
     </div>
     `}
   `);
@@ -69,9 +62,10 @@ async function renderMarketplace() {
 function renderMarketplaceCard(agent) {
   const initial = agentInitial(agent);
   const color = avatarColor(agent.name);
-  const tags = (agent.tags || []).slice(0, 3).map(t => `<span class="mp-tag">${escapeHtml(t)}</span>`).join('');
   const fileLabel = formatFileSize(agent.fileSize || 0);
   const typeLabel = agent.type || 'workspace';
+  const expanded = state.marketplaceExpandedAgentId === agent.id;
+  const commandId = `mp-restore-cmd-${agent.id}`;
 
   return `
     <div class="mp-card">
@@ -79,11 +73,11 @@ function renderMarketplaceCard(agent) {
       <div class="mp-card-header">
         <div class="mp-card-avatar" style="background:${color}">${initial}</div>
         <span class="mp-type-badge">${escapeHtml(typeLabel)}</span>
+        ${agent.publishedVersion ? `<span class="mp-type-badge">v${agent.publishedVersion}</span>` : ''}
       </div>
       <div class="mp-card-body">
         <h3 class="mp-card-name">${escapeHtml(agent.name)}</h3>
         <p class="mp-card-desc">${escapeHtml(truncate(agent.description || 'No description', 100))}</p>
-        ${tags ? `<div class="mp-card-tags">${tags}</div>` : ''}
       </div>
       <div class="mp-card-meta">
         <span class="mp-meta-item" title="Package size">
@@ -98,9 +92,18 @@ function renderMarketplaceCard(agent) {
       <div class="mp-card-footer">
         <button class="mp-btn-install" onclick="getFromMarketplace('${agent.id}')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Get
+          ${expanded ? 'Hide Script' : 'Get'}
         </button>
       </div>
+      ${expanded ? `
+        <div class="mp-restore-panel">
+          <div class="mp-restore-head">
+            <span>Restore script</span>
+            <button class="btn-ghost" onclick="copyMarketplaceRestore('${agent.id}')">Copy script</button>
+          </div>
+          <pre class="cli-code cli-mini mp-restore-code"><code id="${commandId}">${escapeHtml(restoreCommand(agent.id, agent.publishedVersion))}</code></pre>
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -118,9 +121,29 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
-function restoreCommand(id) {
-  const url = publicUrl(`/api/agents/${id}/download`);
-  return `bash -c ${shellQuote(`set -euo pipefail; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT; curl -fsSL ${shellQuote(url)} -o "$tmp/agent.zip"; unzip -o "$tmp/agent.zip" -d .`)}`;
+function restoreCommand(id, version) {
+  const url = publicUrl(version ? `/api/agents/${id}/download/${version}` : `/api/agents/${id}/download`);
+  const script = [
+    'set -euo pipefail',
+    'tmp=$(mktemp -d)',
+    'trap \'rm -rf "$tmp"\' EXIT',
+    `curl -fsSL ${shellQuote(url)} -o "$tmp/agent.zip"`,
+    `backup=".getagents-restore-backup${version ? `-v${version}` : ''}-$(date +%Y%m%d%H%M%S)"`,
+    'mkdir -p "$backup"',
+    'python3 - "$tmp/agent.zip" "$backup" <<\'PYEOF\'',
+    'import os, shutil, sys, zipfile',
+    'zip_path, backup_dir = sys.argv[1], sys.argv[2]',
+    'with zipfile.ZipFile(zip_path) as zf:',
+    '    names = [n for n in zf.namelist() if n and not n.endswith("/") and not os.path.isabs(n) and ".." not in n.split("/")]',
+    '    targets = sorted({n.split("/", 1)[0] for n in names})',
+    '    for target in targets:',
+    '        if os.path.exists(target):',
+    '            shutil.move(target, os.path.join(backup_dir, target))',
+    '    zf.extractall(".")',
+    'PYEOF',
+    'echo "Restored package. Previous files backed up in $backup"',
+  ].join('; ');
+  return `bash -c ${shellQuote(script)}`;
 }
 
 // ---- Event handlers ----
@@ -131,21 +154,24 @@ window.marketplaceSearch = (value) => {
 };
 
 window.marketplaceFilter = (key, value) => {
-  if (key === 'tag') state.marketplaceTag = value;
-  else if (key === 'type') state.marketplaceType = value;
+  if (key === 'type') state.marketplaceType = value;
   else if (key === 'sort') state.marketplaceSort = value;
   renderMarketplace();
 };
 
 window.clearAllFilters = () => {
   state.marketplaceSearch = '';
-  state.marketplaceTag = '';
   state.marketplaceType = '';
   renderMarketplace();
 };
 
-window.getFromMarketplace = async (id) => {
-  const command = restoreCommand(id);
+window.getFromMarketplace = (id) => {
+  state.marketplaceExpandedAgentId = state.marketplaceExpandedAgentId === id ? null : id;
+  renderMarketplace();
+};
+
+window.copyMarketplaceRestore = async (id) => {
+  const command = document.getElementById(`mp-restore-cmd-${id}`)?.textContent || restoreCommand(id);
   try {
     await navigator.clipboard.writeText(command);
     toast('Restore command copied');

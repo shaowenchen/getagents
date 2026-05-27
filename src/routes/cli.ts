@@ -69,7 +69,6 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
     return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid agent metadata' });
   }
   const enabled = parseBool(req.body.enabled, true);
-  const isPublic = parseBool(req.body.isPublic, false);
   const versionComment = req.body.comment ? String(req.body.comment) : undefined;
 
   const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
@@ -100,7 +99,7 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
       fileHash,
       enabled,
       tags,
-      isPublic,
+      isPublic: false,
     });
     await saveAgentFile(agent.id, 1, req.file.buffer);
     await db.createVersion(agent.id, versionComment || 'Initial CLI upload');
@@ -129,7 +128,6 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
   if (req.body.type !== undefined) patch.type = type;
   if (tags !== undefined) patch.tags = tags;
   if (req.body.enabled !== undefined) patch.enabled = enabled;
-  if (req.body.isPublic !== undefined) patch.isPublic = isPublic;
 
   const updated = await db.updateAgent(target.id, patch);
   return res.json({

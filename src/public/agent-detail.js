@@ -17,7 +17,6 @@ async function renderAgentDetail(agentId) {
     state.typeOptions = typeOptions;
     const color = avatarColor(agent.name);
     const initial = agentInitial(agent);
-    const tags = (agent.tags || []).map(t => `<span class="agent-tag">${escapeHtml(t)}</span>`).join('');
 
     render(`
       <div style="margin-bottom:1rem">
@@ -31,10 +30,9 @@ async function renderAgentDetail(agentId) {
             <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.35rem">
               <h2 style="font-size:1.2rem;letter-spacing:-0.01em">${escapeHtml(agent.name)}</h2>
               ${agent.enabled ? '<span class="badge badge-success">Enabled</span>' : '<span class="badge badge-muted">Disabled</span>'}
-              ${agent.isPublic ? '<span class="badge" style="background:#8b5cf6">Public</span>' : ''}
+              ${agent.publishedVersion ? `<span class="badge" style="background:#8b5cf6">Released v${agent.publishedVersion}</span>` : ''}
             </div>
             <p style="color:var(--muted);line-height:1.5">${escapeHtml(agent.description || 'No description')}</p>
-            ${tags ? `<div class="agent-tags" style="margin:0.5rem 0">${tags}</div>` : ''}
             <div class="agent-meta" style="margin-top:0.5rem">
               <span class="agent-chip">File: ${escapeHtml(truncate(agent.filename || 'N/A', 50))}</span>
               <span class="agent-chip">Type: ${escapeHtml(agentTypeLabel(agent.type))}</span>
@@ -46,10 +44,8 @@ async function renderAgentDetail(agentId) {
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:0.4rem;flex-shrink:0">
-            <button class="btn-primary" onclick="downloadAgent('${agent.id}')">Download</button>
+            <button class="btn-primary" onclick="downloadAgent('${agent.id}')">Download Latest</button>
             <button class="btn-ghost" onclick="editAgent('${agent.id}')">Edit</button>
-            <button class="btn-ghost" onclick="shareAgent('${agent.id}')">${agent.shareToken ? 'Update Share' : 'Share'}</button>
-            ${agent.shareToken ? `<button class="btn-ghost btn-danger" onclick="unshareAgent('${agent.id}')">Unshare</button>` : ''}
           </div>
         </div>
       </div>
@@ -63,19 +59,7 @@ async function renderAgentDetail(agentId) {
             <button class="btn-ghost" onclick="compareVersions()">Compare Versions</button>
           </div>
           <div id="version-diff" style="margin-bottom:0.75rem">${renderDiff()}</div>
-          ${versions.map((v, i) => `
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:0.55rem 0;border-bottom:1px solid var(--border);gap:0.5rem">
-              <div>
-                <strong>v${v.version}</strong>
-                ${v.comment ? `<span style="color:var(--muted);margin-left:0.5rem">${escapeHtml(v.comment)}</span>` : ''}
-                <span style="color:var(--muted);margin-left:0.5rem;font-size:0.82rem">${formatTime(agent.updatedAt)}</span>
-              </div>
-              <div style="display:flex;gap:0.35rem">
-                <a href="${downloadUrl(agent.id, v.version)}" class="btn-ghost" style="font-size:0.78rem;text-decoration:none;display:inline-block;padding:0.28rem 0.58rem">Download</a>
-                <button class="btn-ghost" style="font-size:0.78rem" onclick="rollbackVersion('${agent.id}', ${v.version})">Rollback</button>
-              </div>
-            </div>
-          `).join('')}
+          ${renderVersionRows(agent, versions)}
         ` : '<p class="text-muted">No versions yet. Versions are created automatically when you update an agent.</p>'}
       </div>
     `);
@@ -86,6 +70,41 @@ async function renderAgentDetail(agentId) {
       render(`<div class="empty-state"><h3>Authentication required</h3><p class="text-muted"><a href="javascript:void(0)" onclick="navigateTo('/agents')">Sign in</a></p></div>`);
     }
   }
+}
+
+function renderVersionRows(agent, versions) {
+  return versions.map((v) => {
+    const restorePanelId = `restore-cmd-${agent.id}-${v.version}`;
+    const expanded = state.detailExpandedRestoreVersion === v.version;
+    const command = restoreVersionCommand(agent.id, v.version);
+    return `
+      <div style="padding:0.65rem 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
+          <div>
+            <strong>v${v.version}</strong>
+            ${v.isPublished ? '<span class="badge" style="background:#8b5cf6;margin-left:0.45rem">Released</span>' : ''}
+            ${v.comment ? `<span style="color:var(--muted);margin-left:0.5rem">${escapeHtml(v.comment)}</span>` : ''}
+            <span style="color:var(--muted);margin-left:0.5rem;font-size:0.82rem">${formatTime(v.createdAt)}</span>
+          </div>
+          <div style="display:flex;gap:0.35rem;flex-wrap:wrap;justify-content:flex-end">
+            ${v.isPublished ? '' : `<button class="btn-ghost" style="font-size:0.78rem" onclick="publishAgentVersion('${agent.id}', ${v.version})">Publish</button>`}
+            <button class="btn-ghost" style="font-size:0.78rem" onclick="downloadAgentVersion('${agent.id}', ${v.version})">Download</button>
+            <button class="btn-ghost" style="font-size:0.78rem" onclick="toggleVersionRestoreScript(${v.version})">Copy Restore</button>
+            <button class="btn-ghost btn-danger" style="font-size:0.78rem" onclick="deleteAgentVersion('${agent.id}', ${v.version})">Delete</button>
+          </div>
+        </div>
+        ${expanded ? `
+          <div class="mp-restore-panel" style="position:static;margin-top:0.6rem">
+            <div style="display:flex;justify-content:space-between;gap:0.5rem;align-items:center;margin-bottom:0.5rem">
+              <strong>Restore v${v.version}</strong>
+              <button class="btn-primary" onclick="copyCliCommand('${restorePanelId}')">Copy</button>
+            </div>
+            <pre class="cli-code"><code id="${restorePanelId}">${escapeHtml(command)}</code></pre>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
 }
 
 function renderAgentCliPanel(agent) {
@@ -119,13 +138,6 @@ function renderAgentCliPanel(agent) {
   `;
 }
 
-function downloadUrl(agentId, version) {
-  const downloadKey = getDownloadApiKey() || getAdminApiKey();
-  const keyPart = downloadKey ? `?downloadKey=${encodeURIComponent(downloadKey)}` : '';
-  const versionPart = version === undefined ? '' : `/${version}`;
-  return publicUrl(`/api/agents/${agentId}/download${versionPart}${keyPart}`);
-}
-
 function formatFileSize(bytes) {
   if (!bytes || bytes === 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -142,6 +154,41 @@ function formatTime(timestamp) {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit',
   });
+}
+
+function versionDownloadUrl(agentId, version) {
+  const downloadKey = getDownloadApiKey() || getAdminApiKey();
+  const keyPart = downloadKey ? `?downloadKey=${encodeURIComponent(downloadKey)}` : '';
+  return publicUrl(`/api/agents/${agentId}/download/${version}${keyPart}`);
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function restoreVersionCommand(agentId, version) {
+  const url = versionDownloadUrl(agentId, version);
+  const script = [
+    'set -euo pipefail',
+    'tmp=$(mktemp -d)',
+    'trap \'rm -rf "$tmp"\' EXIT',
+    `curl -fsSL ${shellQuote(url)} -o "$tmp/agent-v${version}.zip"`,
+    `backup=".getagents-restore-backup-v${version}-$(date +%Y%m%d%H%M%S)"`,
+    'mkdir -p "$backup"',
+    `python3 - "$tmp/agent-v${version}.zip" "$backup" <<'PYEOF'`,
+    'import os, shutil, sys, zipfile',
+    'zip_path, backup_dir = sys.argv[1], sys.argv[2]',
+    'with zipfile.ZipFile(zip_path) as zf:',
+    '    names = [n for n in zf.namelist() if n and not n.endswith("/") and not os.path.isabs(n) and ".." not in n.split("/")]',
+    '    targets = sorted({n.split("/", 1)[0] for n in names})',
+    '    for target in targets:',
+    '        if os.path.exists(target):',
+    '            shutil.move(target, os.path.join(backup_dir, target))',
+    '    zf.extractall(".")',
+    'PYEOF',
+    'echo "Restored package. Previous files backed up in $backup"',
+  ].join('; ');
+  return `bash -c ${shellQuote(script)}`;
 }
 
 function renderDiff() {
@@ -178,15 +225,41 @@ window.compareVersions = async () => {
   }
 };
 
-window.rollbackVersion = async (agentId, version) => {
-  if (!confirm(`Rollback to version ${version}? This will create a new version with the old settings.`)) return;
+window.deleteAgentVersion = async (agentId, version) => {
+  if (!confirm(`Delete version ${version}? The latest download will not be changed.`)) return;
   try {
-    await api(`/agents/${agentId}/rollback`, { method: 'POST', body: { version }, admin: true });
-    toast('Rolled back successfully');
+    await api(`/agents/${agentId}/versions/${version}`, { method: 'DELETE', admin: true });
+    state.detailDiff = null;
+    toast(`Deleted version ${version}`);
     await renderAgentDetail(agentId);
   } catch (e) {
     alert(e.message);
   }
+};
+
+window.publishAgentVersion = async (agentId, version) => {
+  try {
+    await api(`/agents/${agentId}/versions/${version}/publish`, { method: 'POST', admin: true });
+    state.detailExpandedRestoreVersion = null;
+    toast(`Published version ${version}`);
+    await renderAgentDetail(agentId);
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+window.downloadAgentVersion = (agentId, version) => {
+  const a = document.createElement('a');
+  a.href = versionDownloadUrl(agentId, version);
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+};
+
+window.toggleVersionRestoreScript = async (version) => {
+  state.detailExpandedRestoreVersion = state.detailExpandedRestoreVersion === version ? null : version;
+  await renderAgentDetail(state.detailAgentId);
 };
 
 window.navigateTo = (path) => {

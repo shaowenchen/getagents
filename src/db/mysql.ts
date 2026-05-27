@@ -92,6 +92,7 @@ async function init(): Promise<void> {
       version INT NOT NULL,
       snapshot_json JSON NOT NULL,
       comment TEXT,
+      is_published TINYINT(1) NOT NULL DEFAULT 0,
       created_at BIGINT NOT NULL,
       INDEX idx_agent_versions_agent (agent_id, version),
       CONSTRAINT fk_versions_agent FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
@@ -137,6 +138,7 @@ async function migrateSchema(db: Pool): Promise<void> {
   await ensureMysqlColumn(db, 'agents', 'likes_count', 'INT NOT NULL DEFAULT 0');
   await ensureMysqlColumn(db, 'agents', 'share_token', 'VARCHAR(64)');
   await ensureMysqlColumn(db, 'agents', 'share_password', 'VARCHAR(255)');
+  await ensureMysqlColumn(db, 'agent_versions', 'is_published', 'TINYINT(1) NOT NULL DEFAULT 0');
 
   if (await mysqlColumnExists(db, 'users', 'password_hash')) {
     await db.query(`
@@ -144,6 +146,26 @@ async function migrateSchema(db: Pool): Promise<void> {
       SET login_key_hash = COALESCE(login_key_hash, password_hash),
           upload_key_hash = COALESCE(upload_key_hash, password_hash),
           download_key_hash = COALESCE(download_key_hash, password_hash)
+    `);
+  }
+
+  if (await mysqlColumnExists(db, 'agents', 'is_public') && await mysqlColumnExists(db, 'agent_versions', 'is_published')) {
+    await db.query(`
+      UPDATE agent_versions av
+      JOIN (
+        SELECT agent_id, MAX(version) AS max_version
+        FROM agent_versions
+        GROUP BY agent_id
+      ) latest ON latest.agent_id = av.agent_id AND latest.max_version = av.version
+      JOIN agents a ON a.id = av.agent_id
+      LEFT JOIN (
+        SELECT DISTINCT agent_id
+        FROM agent_versions
+        WHERE is_published = 1
+      ) existing ON existing.agent_id = av.agent_id
+      SET av.is_published = 1
+      WHERE a.is_public = 1
+        AND existing.agent_id IS NULL
     `);
   }
 }
@@ -189,7 +211,7 @@ type AgentRow = RowDataPacket & {
   filename: string; file_size: number; file_hash: string;
   enabled: number; is_public: number; tags_json: string | null;
   download_count: number; likes_count: number;
-  share_token: string | null; share_password: string | null;
+  share_token: string | null; share_password: string | null; published_version?: number | null;
   created_at: number; updated_at: number;
 };
 
@@ -208,7 +230,7 @@ type ManagedAgentTypeRow = RowDataPacket & {
 
 type VersionRow = RowDataPacket & {
   id: string; agent_id: string; version: number; snapshot_json: string;
-  comment: string | null; created_at: number;
+  comment: string | null; is_published: number; created_at: number;
 };
 
 function parseJson<T>(value: unknown, fallback: T): T {
@@ -230,6 +252,7 @@ function toAgent(row: AgentRow): AgentConfig {
     enabled: Boolean(row.enabled),
     tags: parseJson<string[] | undefined>(row.tags_json, undefined),
     isPublic: Boolean(row.is_public),
+    publishedVersion: row.published_version === undefined || row.published_version === null ? undefined : Number(row.published_version),
     downloadCount: Number(row.download_count || 0),
     likesCount: Number(row.likes_count || 0),
     shareToken: row.share_token ?? undefined,
@@ -243,6 +266,7 @@ function toVersion(row: VersionRow): AgentVersion {
     id: row.id, agentId: row.agent_id, version: Number(row.version),
     snapshot: parseJson<AgentSnapshot>(row.snapshot_json, null as unknown as AgentSnapshot) || {} as AgentSnapshot,
     comment: row.comment ?? undefined,
+    isPublished: Boolean(row.is_published),
     createdAt: Number(row.created_at),
   };
 }
@@ -564,18 +588,28 @@ export async function deleteManagedAgentType(userId: string, typeId: string): Pr
 export async function getAllAgents(userId?: string): Promise<AgentConfig[]> {
   await ensureReady();
   const db = requirePool();
+  const selectSql = `
+    SELECT a.*, published.version AS published_version
+    FROM agents a
+    LEFT JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
+  `;
   if (userId) {
-    const [rows] = await db.execute<AgentRow[]>('SELECT * FROM agents WHERE user_id = ? ORDER BY updated_at DESC', [userId]);
+    const [rows] = await db.execute<AgentRow[]>(`${selectSql} WHERE a.user_id = ? ORDER BY a.updated_at DESC`, [userId]);
     return rows.map(toAgent);
   }
-  const [rows] = await db.query<AgentRow[]>('SELECT * FROM agents ORDER BY updated_at DESC');
+  const [rows] = await db.query<AgentRow[]>(`${selectSql} ORDER BY a.updated_at DESC`);
   return rows.map(toAgent);
 }
 
 export async function getAgent(id: string): Promise<AgentConfig | undefined> {
   await ensureReady();
   const db = requirePool();
-  const [rows] = await db.execute<AgentRow[]>('SELECT * FROM agents WHERE id = ?', [id]);
+  const [rows] = await db.execute<AgentRow[]>(`
+    SELECT a.*, published.version AS published_version
+    FROM agents a
+    LEFT JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
+    WHERE a.id = ?
+  `, [id]);
   return rows[0] ? toAgent(rows[0]) : undefined;
 }
 
@@ -668,17 +702,42 @@ export async function createVersion(agentId: string, comment?: string): Promise<
   const snapshot = agentSnapshotFields(agent) as unknown as AgentSnapshot;
 
   await db.execute(
-    'INSERT INTO agent_versions (id,agent_id,version,snapshot_json,comment,created_at) VALUES (?,?,?,?,?,?)',
-    [id, agentId, nextVersion, JSON.stringify(snapshot), comment || null, now]
+    'INSERT INTO agent_versions (id,agent_id,version,snapshot_json,comment,is_published,created_at) VALUES (?,?,?,?,?,?,?)',
+    [id, agentId, nextVersion, JSON.stringify(snapshot), comment || null, 0, now]
   );
 
-  return { id, agentId, version: nextVersion, snapshot, comment, createdAt: now };
+  return { id, agentId, version: nextVersion, snapshot, comment, isPublished: false, createdAt: now };
 }
 
-export async function rollbackToVersion(agentId: string, targetVersion: number): Promise<AgentConfig | undefined> {
-  const versionRecord = await getVersion(agentId, targetVersion);
-  if (!versionRecord) throw new Error('Version not found');
-  return updateAgent(agentId, { ...versionRecord.snapshot });
+export async function getPublishedVersion(agentId: string): Promise<AgentVersion | undefined> {
+  await ensureReady();
+  const db = requirePool();
+  const [rows] = await db.execute<VersionRow[]>(
+    'SELECT * FROM agent_versions WHERE agent_id = ? AND is_published = 1 ORDER BY version DESC LIMIT 1',
+    [agentId]
+  );
+  return rows[0] ? toVersion(rows[0]) : undefined;
+}
+
+export async function publishVersion(agentId: string, version: number): Promise<AgentVersion | undefined> {
+  await ensureReady();
+  const db = requirePool();
+  const existing = await getVersion(agentId, version);
+  if (!existing) return undefined;
+  await db.execute('UPDATE agent_versions SET is_published = 0 WHERE agent_id = ?', [agentId]);
+  await db.execute('UPDATE agent_versions SET is_published = 1 WHERE agent_id = ? AND version = ?', [agentId, version]);
+  await db.execute('UPDATE agents SET updated_at = ? WHERE id = ?', [Date.now(), agentId]);
+  return getVersion(agentId, version);
+}
+
+export async function deleteVersion(agentId: string, version: number): Promise<boolean> {
+  await ensureReady();
+  const db = requirePool();
+  const [result] = await db.execute<ResultSetHeader>(
+    'DELETE FROM agent_versions WHERE agent_id = ? AND version = ?',
+    [agentId, version],
+  );
+  return result.affectedRows > 0;
 }
 
 export async function diffVersions(agentId: string, v1: number, v2: number): Promise<Record<string, { from: unknown; to: unknown }>> {
@@ -717,7 +776,11 @@ export async function getPublicAgents(): Promise<AgentConfig[]> {
   await ensureReady();
   const db = requirePool();
   const [rows] = await db.query<AgentRow[]>(
-    'SELECT * FROM agents WHERE is_public = 1 AND enabled = 1 ORDER BY likes_count DESC, download_count DESC'
+    `SELECT a.*, published.version AS published_version
+     FROM agents a
+     JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
+     WHERE a.enabled = 1
+     ORDER BY a.download_count DESC, a.updated_at DESC`
   );
   return rows.map(toAgent);
 }

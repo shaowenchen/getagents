@@ -282,12 +282,10 @@ async function renderProfilePage() {
 
 async function renderUserAgentsPage() {
   state.resetApiKeyResult = null;
-  const [agents, tagOptions, typeOptions] = await Promise.all([
+  const [agents, typeOptions] = await Promise.all([
     api('/agents', { admin: true }),
-    api('/admin/tags', { admin: true }),
     api('/admin/types', { admin: true }),
   ]);
-  state.tagOptions = tagOptions;
   state.typeOptions = typeOptions;
 
   render(`
@@ -297,7 +295,6 @@ async function renderUserAgentsPage() {
         <p class="text-muted">${agents.length} agent${agents.length === 1 ? '' : 's'}</p>
       </div>
       <div class="admin-actions">
-        <button class="btn-ghost" onclick="navigateTo('/marketplace')">Marketplace</button>
         <button class="btn-primary" onclick="newAgent()">+ New Agent</button>
       </div>
     </div>
@@ -328,13 +325,11 @@ async function renderAdminDashboard() {
     return;
   }
 
-  const [agents, tagOptions, typeOptions, userOptions] = await Promise.all([
+  const [agents, typeOptions, userOptions] = await Promise.all([
     api('/agents', { admin: true }),
-    api('/admin/tags', { admin: true }),
     api('/admin/types', { admin: true }),
     isSystemAdmin ? api('/admin/users', { admin: true }) : Promise.resolve([]),
   ]);
-  state.tagOptions = tagOptions;
   state.typeOptions = typeOptions;
   state.userOptions = userOptions;
   if (!isSystemAdmin && state.adminTab === 'users') state.adminTab = 'agents';
@@ -361,9 +356,6 @@ function renderAdminTabs(agents, isSystemAdmin = false) {
       <button class="admin-tab ${tab === 'agents' ? 'active' : ''}" onclick="setAdminTab('agents')">
         Agents <span>${agents.length}</span>
       </button>
-      <button class="admin-tab ${tab === 'tags' ? 'active' : ''}" onclick="setAdminTab('tags')">
-        Tags
-      </button>
       <button class="admin-tab ${tab === 'types' ? 'active' : ''}" onclick="setAdminTab('types')">
         Types
       </button>
@@ -377,7 +369,6 @@ function renderAdminTabs(agents, isSystemAdmin = false) {
 }
 
 function renderAdminPanel(agents) {
-  if (state.adminTab === 'tags') return renderTagManager();
   if (state.adminTab === 'types') return renderTypeManager();
   if (state.adminTab === 'users') return renderUserManager();
   return renderAgentsAdminPanel(agents);
@@ -396,7 +387,7 @@ function renderAgentsAdminPanel(agents) {
 }
 
 window.setAdminTab = async (tab) => {
-  const nextTab = ['agents', 'tags', 'types', 'users'].includes(tab) ? tab : 'agents';
+  const nextTab = ['agents', 'types', 'users'].includes(tab) ? tab : 'agents';
   if (state.adminTab !== nextTab) state.resetApiKeyResult = null;
   state.adminTab = nextTab;
   await renderAdminDashboard();
@@ -410,11 +401,19 @@ function renderAgentsTable(agents) {
   return `
     <div class="admin-table-wrap">
       <table class="admin-table">
+        <colgroup>
+          <col class="admin-col-name">
+          <col class="admin-col-type">
+          <col class="admin-col-status">
+          <col class="admin-col-file">
+          <col class="admin-col-downloads">
+          <col class="admin-col-updated">
+          <col class="admin-col-actions">
+        </colgroup>
         <thead>
           <tr>
             <th>Name</th>
             <th>Type</th>
-            <th>Tags</th>
             <th>Status</th>
             <th>File</th>
             <th>Downloads</th>
@@ -424,29 +423,33 @@ function renderAgentsTable(agents) {
         </thead>
         <tbody>
           ${agents.map(agent => `
-            <tr>
+            <tr class="admin-agent-row">
               <td>
-                <strong>${escapeHtml(agent.name)}</strong>
-                <div class="text-small">${escapeHtml(truncate(agent.description || 'No description', 70))}</div>
+                <div class="admin-agent-name-cell">
+                  <div class="agent-avatar admin-agent-avatar" style="background:${avatarColor(agent.name)}">${escapeHtml(agentInitial(agent))}</div>
+                  <div>
+                    <strong class="admin-agent-name">${escapeHtml(agent.name)}</strong>
+                    <div class="text-small admin-agent-desc">${escapeHtml(truncate(agent.description || 'No description', 70))}</div>
+                  </div>
+                </div>
               </td>
-              <td><span class="badge badge-muted">${escapeHtml(agentTypeLabel(agent.type))}</span></td>
+              <td><span class="admin-type-badge">${escapeHtml(agentTypeLabel(agent.type))}</span></td>
               <td>
-                ${(agent.tags || []).length
-                  ? `<div class="agent-tags">${(agent.tags || []).map(tag => `<span class="agent-tag">${escapeHtml(tag)}</span>`).join('')}</div>`
-                  : '<span class="text-muted">-</span>'}
+                <div class="admin-status-stack">
+                  ${agent.enabled ? '<span class="admin-status-badge status-enabled">ENABLED</span>' : '<span class="admin-status-badge status-disabled">DISABLED</span>'}
+                  ${agent.publishedVersion ? `<span class="admin-status-badge status-public">RELEASED v${agent.publishedVersion}</span>` : ''}
+                </div>
               </td>
               <td>
-                ${agent.enabled ? '<span class="badge badge-success">ENABLED</span>' : '<span class="badge badge-muted">DISABLED</span>'}
-                ${agent.isPublic ? '<span class="badge" style="background:#8b5cf6;margin-left:0.25rem">PUBLIC</span>' : ''}
+                <div class="admin-file-cell">
+                  <span title="${escapeHtml(agent.filename || '')}">${escapeHtml(truncate(agent.filename || '', 24))}</span>
+                  <div class="text-small">${formatFileSize(agent.fileSize || 0)}</div>
+                </div>
               </td>
+              <td><span class="admin-count">${agent.downloadCount || 0}</span></td>
+              <td class="admin-updated-cell">${formatTime(agent.updatedAt)}</td>
               <td>
-                <span title="${escapeHtml(agent.filename || '')}">${escapeHtml(truncate(agent.filename || '', 24))}</span>
-                <div class="text-small">${formatFileSize(agent.fileSize || 0)}</div>
-              </td>
-              <td>${agent.downloadCount || 0}</td>
-              <td>${formatTime(agent.updatedAt)}</td>
-              <td>
-                <div class="agent-actions">
+                <div class="agent-actions admin-agent-actions">
                   <button class="btn-ghost" onclick="navigateTo('/agents/${agent.id}')">Detail</button>
                   <button class="btn-ghost" onclick="downloadAgent('${agent.id}')">Download</button>
                   <button class="btn-ghost btn-danger" onclick="deleteAgent('${agent.id}')">Delete</button>
@@ -504,7 +507,7 @@ function buildAgentTypeOptions(selected) {
   `).join('');
 }
 
-function buildCliCommand({ agentId, agentName, type, backupDirs, description, tags, enabled, isPublic } = {}) {
+function buildCliCommand({ agentId, agentName, type, backupDirs, description, enabled } = {}) {
   const apiKey = getUploadApiKey() || getAdminApiKey();
   const keyPart = `GETAGENTS_API_KEY=${shellQuote(apiKey || '<your-upload-key>')}`;
   const args = [];
@@ -516,9 +519,7 @@ function buildCliCommand({ agentId, agentName, type, backupDirs, description, ta
   else args.push('--name', shellQuote('<agent-name>'));
 
   if (description) args.push('--description', shellQuote(description));
-  if (tags?.length) args.push('--tags', shellQuote(tags.join(',')));
   if (enabled !== undefined) args.push('--enabled', shellQuote(String(Boolean(enabled))));
-  if (isPublic !== undefined) args.push('--public', shellQuote(String(Boolean(isPublic))));
 
   return `${keyPart} bash <(curl -fsSL ${shellQuote(buildCliScriptUrl())}) ${args.join(' ')}`;
 }
@@ -538,59 +539,6 @@ window.copyCliCommand = async (id) => {
     sel.removeAllRanges();
     sel.addRange(range);
     toast('Selected — press Ctrl/Cmd+C to copy');
-  }
-};
-
-// ---- Managed tags ----
-
-function renderTagManager() {
-  const tags = state.tagOptions || [];
-  return `
-    <div class="card" style="margin-bottom:1rem">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
-        <div>
-          <h3 style="margin:0">Tags</h3>
-        </div>
-        <div style="display:flex;gap:0.45rem;align-items:center;flex-wrap:wrap">
-          <input id="new-tag-name" placeholder="New tag"
-            style="padding:0.45rem 0.6rem;border:1px solid var(--border-strong);border-radius:9px"
-            onkeydown="if(event.key==='Enter')addManagedTag()">
-          <button class="btn-primary" onclick="addManagedTag()">Add Tag</button>
-        </div>
-      </div>
-      <div class="agent-tags" style="margin-top:0.75rem">
-        ${tags.length ? tags.map(tag => `
-          <span class="agent-tag" style="display:inline-flex;align-items:center;gap:0.35rem">
-            ${escapeHtml(tag.name)}
-            <button title="Delete tag" onclick="deleteManagedTag('${tag.id}')"
-              style="border:none;background:transparent;color:inherit;cursor:pointer;padding:0;font-size:1rem;line-height:1">&times;</button>
-          </span>
-        `).join('') : '<span class="text-muted" style="font-size:0.85rem">No tags yet. Add tags here before assigning them to agents.</span>'}
-      </div>
-    </div>
-  `;
-}
-
-window.addManagedTag = async () => {
-  const input = document.getElementById('new-tag-name');
-  const name = input?.value?.trim() || '';
-  if (!name) return alert('Tag name is required');
-  try {
-    await api('/admin/tags', { method: 'POST', body: { name }, admin: true });
-    if (input) input.value = '';
-    await renderCurrentAuthenticatedPage();
-  } catch (e) {
-    alert(e.message);
-  }
-};
-
-window.deleteManagedTag = async (id) => {
-  if (!confirm('Delete this tag? It will be removed from existing agents too.')) return;
-  try {
-    await api(`/admin/tags/${id}`, { method: 'DELETE', admin: true });
-    await renderCurrentAuthenticatedPage();
-  } catch (e) {
-    alert(e.message);
   }
 };
 
@@ -776,14 +724,6 @@ window.dismissResetApiKey = async () => {
   await renderCurrentAuthenticatedPage();
 };
 
-window.toggleAgentTag = (tagName) => {
-  const current = Array.isArray(state.agentForm.tags) ? state.agentForm.tags : [];
-  state.agentForm.tags = current.includes(tagName)
-    ? current.filter(t => t !== tagName)
-    : [...current, tagName];
-  updateAgentFormCliCommand();
-};
-
 function buildAgentFormCliCommand() {
   const type = normalizeAgentType(state.agentForm.type);
   if (state.editingAgent) return buildCliCommand({ agentId: state.editingAgent, type });
@@ -867,8 +807,6 @@ document.addEventListener('change', (event) => {
 
 function renderAgentForm() {
   const f = state.agentForm;
-  const selectedTags = Array.isArray(f.tags) ? f.tags : [];
-  const tagOptions = state.tagOptions || [];
   const isEditing = Boolean(state.editingAgent);
   return `
     <div class="card" style="margin-bottom:1rem">
@@ -894,19 +832,7 @@ function renderAgentForm() {
           <input type="file" id="agent-file-input" accept=".zip" onchange="handleAgentFileChange(event)">
           <span class="text-muted" style="font-size:0.75rem">Upload a new ZIP to create a new version. Leave empty to only change metadata.</span>
         </label>
-        <label class="field">
-          <span class="field-label">Tags<span class="field-optional">optional</span></span>
-          <div class="tag-option-list">
-            ${tagOptions.length ? tagOptions.map(tag => `
-              <label class="tag-option">
-                <input type="checkbox" value="${escapeHtml(tag.name)}" ${selectedTags.includes(tag.name) ? 'checked' : ''} onchange="toggleAgentTag(this.value)">
-                <span>${escapeHtml(tag.name)}</span>
-              </label>
-            `).join('') : '<span class="text-muted" style="font-size:0.82rem">Add tags in the Tags section above before assigning them.</span>'}
-          </div>
-        </label>
         <label><input data-agent-field="enabled" type="checkbox" ${f.enabled ? 'checked' : ''} onchange="updateAgentFormField('enabled', this.checked)"> Enabled</label>
-        <label><input data-agent-field="isPublic" type="checkbox" ${f.isPublic ? 'checked' : ''} onchange="updateAgentFormField('isPublic', this.checked)"> Publish to Marketplace</label>
         ` : ''}
         ${renderAgentFormCliCommand()}
         ${isEditing ? `
@@ -926,7 +852,6 @@ function renderAgentCard(agent) {
   const color = avatarColor(agent.name);
   const filename = escapeHtml(truncate(agent.filename || '', 40));
   const fileSizeLabel = formatFileSize(agent.fileSize || 0);
-  const tags = (agent.tags || []).map(t => `<span class="agent-tag">${escapeHtml(t)}</span>`).join('');
 
   return `
     <div class="agent-row">
@@ -937,11 +862,9 @@ function renderAgentCard(agent) {
             <span class="agent-name">${name}</span>
             <span class="badge badge-muted">${escapeHtml(agentTypeLabel(agent.type))}</span>
             ${agent.enabled ? '<span class="badge badge-success">ENABLED</span>' : '<span class="badge badge-muted">DISABLED</span>'}
-            ${agent.isPublic ? '<span class="badge" style="background:#8b5cf6">PUBLIC</span>' : ''}
-            ${agent.shareToken ? '<span class="badge" style="background:#f59e0b">SHARED</span>' : ''}
+            ${agent.publishedVersion ? `<span class="badge" style="background:#8b5cf6">RELEASED v${agent.publishedVersion}</span>` : ''}
           </div>
           <p class="agent-description">${escapeHtml(truncate(agent.description || 'No description', 120))}</p>
-          ${tags ? `<div class="agent-tags">${tags}</div>` : ''}
           <div class="agent-meta">
             <span class="agent-chip" title="${escapeHtml(agent.fileHash || '')}">${filename}</span>
             <span class="agent-chip">${fileSizeLabel}</span>
@@ -952,7 +875,6 @@ function renderAgentCard(agent) {
           <button class="btn-ghost" onclick="navigateTo('/agents/${agent.id}')">Detail</button>
           <button class="btn-ghost" onclick="editAgent('${agent.id}')">Edit</button>
           <button class="btn-ghost" onclick="downloadAgent('${agent.id}')">Download</button>
-          <button class="btn-ghost" onclick="shareAgent('${agent.id}')">${agent.shareToken ? 'Share' : 'Share'}</button>
           <button class="btn-ghost btn-danger" onclick="deleteAgent('${agent.id}')">Delete</button>
         </div>
       </div>
@@ -1009,8 +931,6 @@ window.editAgent = async (id) => {
     type: normalizeAgentType(a.type),
     description: a.description,
     enabled: a.enabled,
-    tags: a.tags || [],
-    isPublic: a.isPublic || false,
   };
   await renderUserAgentsPage();
 };
@@ -1025,8 +945,6 @@ window.saveAgent = async () => {
   formData.append('type', normalizeAgentType(state.agentForm.type));
   formData.append('description', state.agentForm.description);
   formData.append('enabled', state.agentForm.enabled);
-  formData.append('isPublic', state.agentForm.isPublic);
-  if ((state.agentForm.tags || []).length) formData.append('tags', state.agentForm.tags.join(','));
 
   if (!state.agentForm.name) {
     return alert('Name is required');
@@ -1140,34 +1058,6 @@ window.doImport = async () => {
 window.cancelImport = () => {
   const el = document.getElementById('import-dialog');
   if (el) el.innerHTML = '';
-};
-
-// ---- Share ----
-
-window.shareAgent = async (id) => {
-  const password = prompt('Set a share password (optional, leave empty for public link):');
-  try {
-    const result = await api(`/agents/${id}/share`, {
-      method: 'POST',
-      body: { password: password || undefined },
-      admin: true,
-    });
-    await navigator.clipboard.writeText(result.url);
-    toast(`Share link copied! ${result.password ? '(Password protected)' : '(Public)'}`);
-  } catch (e) {
-    alert(e.message);
-  }
-};
-
-window.unshareAgent = async (id) => {
-  if (!confirm('Remove sharing for this agent?')) return;
-  try {
-    await api(`/agents/${id}/share`, { method: 'DELETE', admin: true });
-    toast('Sharing removed');
-    await renderCurrentAuthenticatedPage();
-  } catch (e) {
-    alert(e.message);
-  }
 };
 
 // ---- Toast ----

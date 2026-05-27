@@ -36,7 +36,7 @@ function handleRoute() {
   const appEl = document.getElementById('app');
   const mainEl = document.querySelector('main');
   appEl.classList.remove('admin-main');
-  mainEl?.classList.remove('mp-wide');
+  mainEl?.classList.remove('mp-wide', 'admin-wide');
 
   // Route matching
   if (path === '/' || path === '/marketplace') {
@@ -49,7 +49,10 @@ function handleRoute() {
     const agentId = path.slice(8);
     routeMap.get('/agents/:id')?.(agentId);
   }
-  else if (path === '/admin') routeMap.get('/admin')?.();
+  else if (path === '/admin') {
+    mainEl?.classList.add('admin-wide');
+    routeMap.get('/admin')?.();
+  }
   else if (routeMap.has('/')) routeMap.get('/')?.();
 
   lastPath = path;

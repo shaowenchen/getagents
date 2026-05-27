@@ -75,6 +75,7 @@ db.exec(`
     version INTEGER NOT NULL,
     snapshot_json TEXT NOT NULL,
     comment TEXT,
+    is_published INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
   );
@@ -113,6 +114,7 @@ function migrateSchema(): void {
   ensureSqliteColumn('agents', 'likes_count', 'INTEGER NOT NULL DEFAULT 0');
   ensureSqliteColumn('agents', 'share_token', 'TEXT');
   ensureSqliteColumn('agents', 'share_password', 'TEXT');
+  ensureSqliteColumn('agent_versions', 'is_published', 'INTEGER NOT NULL DEFAULT 0');
 
   const userColumns = sqliteColumns('users');
   if (userColumns.has('password_hash')) {
@@ -121,6 +123,30 @@ function migrateSchema(): void {
       SET login_key_hash = COALESCE(login_key_hash, password_hash),
           upload_key_hash = COALESCE(upload_key_hash, password_hash),
           download_key_hash = COALESCE(download_key_hash, password_hash)
+    `).run();
+  }
+
+  const versionColumns = sqliteColumns('agent_versions');
+  const agentColumns = sqliteColumns('agents');
+  if (agentColumns.has('is_public') && versionColumns.has('is_published')) {
+    db.prepare(`
+      UPDATE agent_versions
+      SET is_published = 1
+      WHERE id IN (
+        SELECT av.id
+        FROM agent_versions av
+        JOIN (
+          SELECT agent_id, MAX(version) AS max_version
+          FROM agent_versions
+          GROUP BY agent_id
+        ) latest ON latest.agent_id = av.agent_id AND latest.max_version = av.version
+        JOIN agents a ON a.id = av.agent_id
+        WHERE a.is_public = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM agent_versions existing
+            WHERE existing.agent_id = av.agent_id AND existing.is_published = 1
+          )
+      )
     `).run();
   }
 }
@@ -141,6 +167,7 @@ function rowToAgent(row: Record<string, unknown>): AgentConfig {
     enabled: Boolean(row.enabled),
     tags: tryParseJson(row.tags_json as string),
     isPublic: Boolean(row.is_public),
+    publishedVersion: row.published_version === undefined || row.published_version === null ? undefined : Number(row.published_version),
     downloadCount: Number(row.download_count || 0),
     likesCount: Number(row.likes_count || 0),
     shareToken: (row.share_token as string) || undefined,
@@ -395,14 +422,24 @@ export async function deleteManagedAgentType(userId: string, typeId: string): Pr
 // ---- Agents ----
 
 export async function getAllAgents(userId?: string): Promise<AgentConfig[]> {
+  const selectSql = `
+    SELECT a.*, published.version AS published_version
+    FROM agents a
+    LEFT JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
+  `;
   if (userId) {
-    return db.prepare('SELECT * FROM agents WHERE user_id = ? ORDER BY updated_at DESC').all(userId).map((row: unknown) => rowToAgent(row as Record<string, unknown>));
+    return db.prepare(`${selectSql} WHERE a.user_id = ? ORDER BY a.updated_at DESC`).all(userId).map((row: unknown) => rowToAgent(row as Record<string, unknown>));
   }
-  return db.prepare('SELECT * FROM agents ORDER BY updated_at DESC').all().map((row: unknown) => rowToAgent(row as Record<string, unknown>));
+  return db.prepare(`${selectSql} ORDER BY a.updated_at DESC`).all().map((row: unknown) => rowToAgent(row as Record<string, unknown>));
 }
 
 export async function getAgent(id: string): Promise<AgentConfig | undefined> {
-  const row = db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  const row = db.prepare(`
+    SELECT a.*, published.version AS published_version
+    FROM agents a
+    LEFT JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
+    WHERE a.id = ?
+  `).get(id) as Record<string, unknown> | undefined;
   return row ? rowToAgent(row) : undefined;
 }
 
@@ -468,6 +505,7 @@ function rowToVersion(row: Record<string, unknown>): AgentVersion {
     version: Number(row.version),
     snapshot: JSON.parse(row.snapshot_json as string),
     comment: (row.comment as string) || undefined,
+    isPublished: Boolean(row.is_published),
     createdAt: Number(row.created_at),
   };
 }
@@ -504,16 +542,32 @@ export async function createVersion(agentId: string, comment?: string): Promise<
   const id = uuid();
   const now = Date.now();
   const snapshot = agentSnapshotFields(agent) as unknown as AgentSnapshot;
-  db.prepare('INSERT INTO agent_versions (id,agent_id,version,snapshot_json,comment,created_at) VALUES (?,?,?,?,?,?)')
-    .run(id, agentId, nextVersion, JSON.stringify(snapshot), comment || null, now);
+  db.prepare('INSERT INTO agent_versions (id,agent_id,version,snapshot_json,comment,is_published,created_at) VALUES (?,?,?,?,?,?,?)')
+    .run(id, agentId, nextVersion, JSON.stringify(snapshot), comment || null, 0, now);
 
-  return { id, agentId, version: nextVersion, snapshot, comment, createdAt: now };
+  return { id, agentId, version: nextVersion, snapshot, comment, isPublished: false, createdAt: now };
 }
 
-export async function rollbackToVersion(agentId: string, targetVersion: number): Promise<AgentConfig | undefined> {
-  const versionRecord = await getVersion(agentId, targetVersion);
-  if (!versionRecord) throw new Error('Version not found');
-  return updateAgent(agentId, { ...versionRecord.snapshot });
+export async function getPublishedVersion(agentId: string): Promise<AgentVersion | undefined> {
+  const row = db.prepare('SELECT * FROM agent_versions WHERE agent_id = ? AND is_published = 1 ORDER BY version DESC LIMIT 1').get(agentId) as Record<string, unknown> | undefined;
+  return row ? rowToVersion(row) : undefined;
+}
+
+export async function publishVersion(agentId: string, version: number): Promise<AgentVersion | undefined> {
+  const existing = await getVersion(agentId, version);
+  if (!existing) return undefined;
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE agent_versions SET is_published = 0 WHERE agent_id = ?').run(agentId);
+    db.prepare('UPDATE agent_versions SET is_published = 1 WHERE agent_id = ? AND version = ?').run(agentId, version);
+    db.prepare('UPDATE agents SET updated_at = ? WHERE id = ?').run(Date.now(), agentId);
+  });
+  tx();
+  return getVersion(agentId, version);
+}
+
+export async function deleteVersion(agentId: string, version: number): Promise<boolean> {
+  const result = db.prepare('DELETE FROM agent_versions WHERE agent_id = ? AND version = ?').run(agentId, version);
+  return result.changes > 0;
 }
 
 export async function diffVersions(agentId: string, v1: number, v2: number): Promise<Record<string, { from: unknown; to: unknown }>> {
@@ -549,7 +603,13 @@ export async function recordImport(agentId: string, sourceType: string, sourceUr
 // ---- Marketplace ----
 
 export async function getPublicAgents(): Promise<AgentConfig[]> {
-  return db.prepare('SELECT * FROM agents WHERE is_public = 1 AND enabled = 1 ORDER BY likes_count DESC, download_count DESC').all().map((row: unknown) => rowToAgent(row as Record<string, unknown>));
+  return db.prepare(`
+    SELECT a.*, published.version AS published_version
+    FROM agents a
+    JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
+    WHERE a.enabled = 1
+    ORDER BY a.download_count DESC, a.updated_at DESC
+  `).all().map((row: unknown) => rowToAgent(row as Record<string, unknown>));
 }
 
 export async function getAgentByShareToken(token: string): Promise<AgentConfig | undefined> {

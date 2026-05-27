@@ -50,7 +50,8 @@ router.get('/types', asyncHandler(async (_req, res) => {
 
 router.get('/:id', asyncHandler(async (req, res) => {
   const agent = await db.getAgent(req.params.id);
-  if (!agent || !agent.isPublic || !agent.enabled) {
+  const published = agent ? await db.getPublishedVersion(req.params.id) : undefined;
+  if (!agent || !agent.enabled || !published) {
     return res.status(404).json({ error: 'Agent not found' });
   }
   res.json(agent);
@@ -59,8 +60,9 @@ router.get('/:id', asyncHandler(async (req, res) => {
 router.post('/:id/install', requireAuth, asyncHandler(async (req, res) => {
   const userId = (req as any).userId;
   const source = await db.getAgent(req.params.id);
-  if (!source || !source.isPublic) {
-    return res.status(404).json({ error: 'Agent not found or not public' });
+  const published = source ? await db.getPublishedVersion(req.params.id) : undefined;
+  if (!source || !published) {
+    return res.status(404).json({ error: 'Agent not found or not released' });
   }
 
   // Increment download count on source
@@ -91,8 +93,9 @@ router.post('/:id/install', requireAuth, asyncHandler(async (req, res) => {
 
 router.post('/:id/like', asyncHandler(async (req, res) => {
   const agent = await db.getAgent(req.params.id);
-  if (!agent || !agent.isPublic) {
-    return res.status(404).json({ error: 'Agent not found or not public' });
+  const published = agent ? await db.getPublishedVersion(req.params.id) : undefined;
+  if (!agent || !published) {
+    return res.status(404).json({ error: 'Agent not found or not released' });
   }
   const updated = await db.updateAgent(req.params.id, { likesCount: (agent.likesCount || 0) + 1 });
   res.json({ likesCount: updated?.likesCount || 0 });

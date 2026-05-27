@@ -31,8 +31,10 @@ export const deleteManagedAgentType = store.deleteManagedAgentType;
 // Version management
 export const getVersions = store.getVersions;
 export const getVersion = store.getVersion;
+export const getPublishedVersion = store.getPublishedVersion;
 export const createVersion = store.createVersion;
-export const rollbackToVersion = store.rollbackToVersion;
+export const publishVersion = store.publishVersion;
+export const deleteVersion = store.deleteVersion;
 export const diffVersions = store.diffVersions;
 
 // Import tracking

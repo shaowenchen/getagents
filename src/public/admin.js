@@ -307,7 +307,6 @@ async function renderUserAgentsPage() {
         <div class="agent-empty empty-state">
           <h3>No agents yet</h3>
           <p class="text-muted" style="margin:0.35rem 0 1rem">Create your first agent or install from the marketplace.</p>
-          <button class="btn-primary" onclick="newAgent()">+ New Agent</button>
         </div>
       `}
     </div>

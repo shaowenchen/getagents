@@ -114,7 +114,7 @@ app.listen(Number(PORT), HOST, async () => {
     uriPrefix: URI_PREFIX || '/',
     logLevel: (process.env.LOG_LEVEL || 'debug').toLowerCase(),
     sqlDsn: Boolean(process.env.SQL_DSN),
-    maxUploadMb: process.env.MAX_UPLOAD_MB || '100',
+    maxUploadMb: process.env.MAX_UPLOAD_MB || '500',
     accessUrl: ACCESS_URL || 'auto',
   });
 });

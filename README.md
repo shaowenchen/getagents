@@ -35,7 +35,7 @@ ACCESS_URL=http://localhost:3000/getagents
 SESSION_SECRET=getagents-session-secret-change-me
 LOG_LEVEL=debug
 SQL_DSN=
-MAX_UPLOAD_MB=100
+MAX_UPLOAD_MB=500
 ADMIN_API_KEY=user-adminAPIKeyChangeMe0000000000000
 ```
 
@@ -163,8 +163,8 @@ cursor       ${HOME}/.cursor
 claude       ${HOME}/.claude
 codex        ${HOME}/.codex
 gemini       ${HOME}/.gemini
-openclaw     ${HOME}/.openclaw
-hermes-agent ${HOME}/.hermes
+openclaw     ${OPENCLAW_HOME:-${HOME}/.openclaw}
+hermes-agent ${HERMES_HOME:-${HOME}/.hermes}
 ```
 
 The generated command includes `--type`, so creating or updating an agent preserves the type metadata and backs up the matching runtime directories by default.

@@ -90,6 +90,10 @@ expand_source_path() {
   local path="\$1"
   if [[ "\$path" == "~" ]]; then
     printf '%s\\n' "\$HOME"
+  elif [[ "\$path" == "\\\${HERMES_HOME:-\\\${HOME}/.hermes}" ]]; then
+    printf '%s\\n' "\${HERMES_HOME:-\$HOME/.hermes}"
+  elif [[ "\$path" == "\\\${OPENCLAW_HOME:-\\\${HOME}/.openclaw}" ]]; then
+    printf '%s\\n' "\${OPENCLAW_HOME:-\$HOME/.openclaw}"
   elif [[ "\$path" == "~/"* ]]; then
     printf '%s/%s\\n' "\$HOME" "\${path:2}"
   elif [[ "\$path" == "\\\$HOME" ]]; then

@@ -1,7 +1,13 @@
 import multer from 'multer';
+import { mkdirSync } from 'fs';
+import { unlink } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import crypto from 'crypto';
 import * as db from '../db/store.js';
 
-const maxUploadSize = Number(process.env.MAX_UPLOAD_MB || 100) * 1024 * 1024;
+const uploadTempDir = join(tmpdir(), 'getagents-uploads');
+const maxUploadSize = Number(process.env.MAX_UPLOAD_MB || 500) * 1024 * 1024;
 
 function parseTagInput(value: unknown): string[] | undefined {
   if (value === undefined || value === null || value === '') return undefined;
@@ -10,8 +16,15 @@ function parseTagInput(value: unknown): string[] | undefined {
 }
 
 export function createZipUpload(): multer.Multer {
+  mkdirSync(uploadTempDir, { recursive: true });
   return multer({
-    storage: multer.memoryStorage(),
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, uploadTempDir),
+      filename: (_req, file, cb) => {
+        const suffix = file.originalname.toLowerCase().endsWith('.zip') ? '.zip' : '';
+        cb(null, `${Date.now()}-${crypto.randomUUID()}${suffix}`);
+      },
+    }),
     limits: { fileSize: maxUploadSize },
     fileFilter: (_req, file, cb) => {
       if (!file.originalname.toLowerCase().endsWith('.zip') && file.mimetype !== 'application/zip') {
@@ -21,6 +34,10 @@ export function createZipUpload(): multer.Multer {
       cb(null, true);
     },
   });
+}
+
+export async function cleanupUploadedFile(file?: Express.Multer.File): Promise<void> {
+  if (file?.path) await unlink(file.path).catch(() => undefined);
 }
 
 export async function validateManagedTags(userId: string, value: unknown): Promise<string[] | undefined> {

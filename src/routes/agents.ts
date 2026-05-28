@@ -2,9 +2,9 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import * as db from '../db/store.js';
 import { requireAuth, requireDownloadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import { saveAgentFile, getAgentFileStream, deleteAgentFiles, deleteAgentVersionFile } from '../utils/fileStore.js';
+import { hashAgentFile, saveAgentFileFromPath, getAgentFileStream, deleteAgentFiles, deleteAgentVersionFile } from '../utils/fileStore.js';
 import { inferAccessUrl, normalizeRoutePrefix } from '../utils/accessUrl.js';
-import { createZipUpload, validateAgentType, validateManagedTags } from './agentMetadata.js';
+import { cleanupUploadedFile, createZipUpload, validateAgentType, validateManagedTags } from './agentMetadata.js';
 import type { AgentConfig } from '../shared/types.js';
 import crypto from 'crypto';
 
@@ -54,35 +54,36 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
     return res.status(400).json({ error: 'agentFile (ZIP) is required' });
   }
 
-  let selectedTags: string[] | undefined;
-  let selectedType: string;
   try {
-    selectedTags = await validateManagedTags(userId, tags);
-    selectedType = await validateAgentType(userId, req.body.type);
-  } catch (err) {
-    return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid agent metadata' });
+    let selectedTags: string[] | undefined;
+    let selectedType: string;
+    try {
+      selectedTags = await validateManagedTags(userId, tags);
+      selectedType = await validateAgentType(userId, req.body.type);
+    } catch (err) {
+      return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid agent metadata' });
+    }
+
+    const fileHash = await hashAgentFile(req.file.path);
+    const agent = await db.createAgent(userId, {
+      name,
+      type: selectedType,
+      description: description || '',
+      filename: req.file.originalname,
+      fileSize: req.file.size,
+      fileHash,
+      avatar,
+      tags: selectedTags,
+      isPublic: false,
+    });
+
+    await saveAgentFileFromPath(agent.id, 1, req.file.path);
+    await db.createVersion(agent.id, 'Initial upload');
+
+    res.status(201).json(agent);
+  } finally {
+    await cleanupUploadedFile(req.file);
   }
-
-  // Create the agent record first to get an ID
-  const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
-  const agent = await db.createAgent(userId, {
-    name,
-    type: selectedType,
-    description: description || '',
-    filename: req.file.originalname,
-    fileSize: req.file.size,
-    fileHash,
-    avatar,
-    tags: selectedTags,
-    isPublic: false,
-  });
-
-  // Save file to disk (version 1)
-  await saveAgentFile(agent.id, 1, req.file.buffer);
-  // Create initial version record
-  await db.createVersion(agent.id, 'Initial upload');
-
-  res.status(201).json(agent);
 }));
 
 router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (req, res) => {
@@ -90,36 +91,39 @@ router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (
   if (!existing) return res.status(404).json({ error: 'Agent not found' });
 
   const patch: Partial<AgentConfig> = {};
-  if (req.body.name !== undefined) patch.name = req.body.name;
-  if (req.body.type !== undefined) {
-    try {
-      patch.type = await validateAgentType((req as any).userId, req.body.type);
-    } catch (err) {
-      return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid type' });
+  try {
+    if (req.body.name !== undefined) patch.name = req.body.name;
+    if (req.body.type !== undefined) {
+      try {
+        patch.type = await validateAgentType((req as any).userId, req.body.type);
+      } catch (err) {
+        return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid type' });
+      }
     }
-  }
-  if (req.body.description !== undefined) patch.description = req.body.description;
-  if (req.body.tags !== undefined) {
-    try {
-      patch.tags = await validateManagedTags((req as any).userId, req.body.tags);
-    } catch (err) {
-      return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid tags' });
+    if (req.body.description !== undefined) patch.description = req.body.description;
+    if (req.body.tags !== undefined) {
+      try {
+        patch.tags = await validateManagedTags((req as any).userId, req.body.tags);
+      } catch (err) {
+        return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid tags' });
+      }
     }
+
+    if (req.file) {
+      patch.filename = req.file.originalname;
+      patch.fileSize = req.file.size;
+      patch.fileHash = await hashAgentFile(req.file.path);
+
+      const versions = await db.getVersions(req.params.id);
+      const nextVersion = (versions[0]?.version ?? 0) + 1;
+      await saveAgentFileFromPath(req.params.id, nextVersion, req.file.path);
+    }
+
+    const agent = await db.updateAgent(req.params.id, patch);
+    res.json(agent);
+  } finally {
+    await cleanupUploadedFile(req.file);
   }
-
-  if (req.file) {
-    patch.filename = req.file.originalname;
-    patch.fileSize = req.file.size;
-    patch.fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
-
-    // Get next version number and save file
-    const versions = await db.getVersions(req.params.id);
-    const nextVersion = (versions[0]?.version ?? 0) + 1;
-    await saveAgentFile(req.params.id, nextVersion, req.file.buffer);
-  }
-
-  const agent = await db.updateAgent(req.params.id, patch);
-  res.json(agent);
 }));
 
 router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {

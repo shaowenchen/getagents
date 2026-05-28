@@ -42,7 +42,7 @@ spec:
             - name: SQL_DSN
               value: ""
             - name: MAX_UPLOAD_MB
-              value: "100"
+              value: "500"
             - name: ADMIN_API_KEY
               value: "user-adminAPIKeyChangeMe0000000000000"
             - name: STORAGE_DRIVER

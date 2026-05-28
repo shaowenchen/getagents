@@ -186,6 +186,23 @@ async function migrateSchema(db: Pool): Promise<void> {
     WHERE mat.name = 'workspace'
   `);
 
+  await db.execute(
+    `UPDATE managed_agent_types
+     SET backup_dirs_json = ?
+     WHERE name = 'openclaw'
+       AND JSON_LENGTH(backup_dirs_json) = 1
+       AND JSON_UNQUOTE(JSON_EXTRACT(backup_dirs_json, '$[0]')) = ?`,
+    [JSON.stringify(['${OPENCLAW_HOME:-${HOME}/.openclaw}']), '${HOME}/.openclaw']
+  );
+  await db.execute(
+    `UPDATE managed_agent_types
+     SET backup_dirs_json = ?
+     WHERE name = 'hermes-agent'
+       AND JSON_LENGTH(backup_dirs_json) = 1
+       AND JSON_UNQUOTE(JSON_EXTRACT(backup_dirs_json, '$[0]')) = ?`,
+    [JSON.stringify(['${HERMES_HOME:-${HOME}/.hermes}']), '${HOME}/.hermes']
+  );
+
   if (await mysqlColumnExists(db, 'agents', 'enabled')) {
     await db.query('ALTER TABLE agents DROP COLUMN enabled');
   }
@@ -307,8 +324,8 @@ const defaultAgentTypes = [
   { name: 'claude', backupDirs: ['${HOME}/.claude'] },
   { name: 'codex', backupDirs: ['${HOME}/.codex'] },
   { name: 'gemini', backupDirs: ['${HOME}/.gemini'] },
-  { name: 'openclaw', backupDirs: ['${HOME}/.openclaw'] },
-  { name: 'hermes-agent', backupDirs: ['${HOME}/.hermes'] },
+  { name: 'openclaw', backupDirs: ['${OPENCLAW_HOME:-${HOME}/.openclaw}'] },
+  { name: 'hermes-agent', backupDirs: ['${HERMES_HOME:-${HOME}/.hermes}'] },
 ];
 
 function normalizeBackupDirs(value: string[]): string[] {

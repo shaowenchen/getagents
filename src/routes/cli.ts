@@ -37,11 +37,6 @@ async function validateManagedTags(userId: string, tags: string[] | undefined): 
   return [...new Set(tags)];
 }
 
-function parseBool(value: unknown, defaultValue: boolean): boolean {
-  if (value === undefined || value === null || value === '') return defaultValue;
-  return value === 'true' || value === true || value === '1' || value === 1;
-}
-
 async function validateAgentType(userId: string, value: unknown): Promise<string> {
   const type = String(value || 'currentdir').trim();
   const allowed = new Set((await db.getManagedAgentTypes(userId)).map((item) => item.name));
@@ -68,7 +63,6 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
   } catch (err) {
     return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid agent metadata' });
   }
-  const enabled = parseBool(req.body.enabled, true);
   const versionComment = req.body.comment ? String(req.body.comment) : undefined;
 
   const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
@@ -97,7 +91,6 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
       filename,
       fileSize,
       fileHash,
-      enabled,
       tags,
       isPublic: false,
     });
@@ -127,7 +120,6 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
   if (description) patch.description = description;
   if (req.body.type !== undefined) patch.type = type;
   if (tags !== undefined) patch.tags = tags;
-  if (req.body.enabled !== undefined) patch.enabled = enabled;
 
   const updated = await db.updateAgent(target.id, patch);
   return res.json({

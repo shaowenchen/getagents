@@ -51,7 +51,7 @@ router.get('/types', asyncHandler(async (_req, res) => {
 router.get('/:id', asyncHandler(async (req, res) => {
   const agent = await db.getAgent(req.params.id);
   const published = agent ? await db.getPublishedVersion(req.params.id) : undefined;
-  if (!agent || !agent.enabled || !published) {
+  if (!agent || !published) {
     return res.status(404).json({ error: 'Agent not found' });
   }
   res.json(agent);
@@ -77,7 +77,6 @@ router.post('/:id/install', requireAuth, asyncHandler(async (req, res) => {
     fileSize: source.fileSize,
     fileHash: source.fileHash,
     tags: source.tags,
-    enabled: true,
     isPublic: false,
   });
 

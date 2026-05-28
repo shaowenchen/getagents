@@ -174,6 +174,41 @@ function updateUserNavInfo() {
   `;
 }
 
+async function initializeUserNavInfo() {
+  if (!getAdminToken()) {
+    state.currentUser = null;
+    updateUserNavInfo();
+    return;
+  }
+
+  state.currentUser = {
+    userId: state.currentUser?.userId || '',
+    username: currentUsername(),
+  };
+  updateUserNavInfo();
+
+  try {
+    const status = await api('/admin/status', { admin: true });
+    if (!status.authenticated) {
+      clearAdminToken();
+      state.currentUser = null;
+      updateUserNavInfo();
+      return;
+    }
+    state.currentUser = { userId: status.userId, username: status.username || currentUsername() };
+    if (status.username) sessionStorage.setItem('admin_username', status.username);
+    updateUserNavInfo();
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) {
+      clearAdminToken();
+      state.currentUser = null;
+      updateUserNavInfo();
+    }
+  }
+}
+
+initializeUserNavInfo();
+
 window.toggleUserMenu = (event) => {
   event?.stopPropagation();
   document.getElementById('nav-user-info')?.classList.toggle('open');
@@ -468,8 +503,7 @@ function renderAgentsTable(agents) {
               <td><span class="admin-type-badge">${escapeHtml(agentTypeLabel(agent.type))}</span></td>
               <td>
                 <div class="admin-status-stack">
-                  ${agent.enabled ? '<span class="admin-status-badge status-enabled">ENABLED</span>' : '<span class="admin-status-badge status-disabled">DISABLED</span>'}
-                  ${agent.publishedVersion ? `<span class="admin-status-badge status-public">RELEASED v${agent.publishedVersion}</span>` : ''}
+                  ${agent.publishedVersion ? `<span class="admin-status-badge status-public">RELEASED v${agent.publishedVersion}</span>` : '<span class="text-muted">—</span>'}
                 </div>
               </td>
               <td>
@@ -539,7 +573,7 @@ function buildAgentTypeOptions(selected) {
   `).join('');
 }
 
-function buildCliCommand({ agentId, agentName, type, backupDirs, description, enabled } = {}) {
+function buildCliCommand({ agentId, agentName, type, backupDirs, description } = {}) {
   const apiKey = getUploadApiKey() || getAdminApiKey();
   const keyPart = `GETAGENTS_API_KEY=${shellQuote(apiKey || '<your-upload-key>')}`;
   const args = [];
@@ -551,7 +585,6 @@ function buildCliCommand({ agentId, agentName, type, backupDirs, description, en
   else args.push('--name', shellQuote('<agent-name>'));
 
   if (description) args.push('--description', shellQuote(description));
-  if (enabled !== undefined) args.push('--enabled', shellQuote(String(Boolean(enabled))));
 
   return `${keyPart} bash <(curl -fsSL ${shellQuote(buildCliScriptUrl())}) ${args.join(' ')}`;
 }
@@ -867,7 +900,6 @@ function renderAgentForm() {
           <input type="file" id="agent-file-input" accept=".zip" onchange="handleAgentFileChange(event)">
           <span class="text-muted" style="font-size:0.75rem">Upload a new ZIP to create a new version. Leave empty to only change metadata.</span>
         </label>
-        <label><input data-agent-field="enabled" type="checkbox" ${f.enabled ? 'checked' : ''} onchange="updateAgentFormField('enabled', this.checked)"> Enabled</label>
         ` : ''}
         ${renderAgentFormCliCommand()}
         ${isEditing ? `
@@ -900,7 +932,6 @@ function renderAgentCard(agent) {
           <div class="agent-title-row">
             <span class="agent-name">${name}</span>
             <span class="badge badge-muted">${escapeHtml(agentTypeLabel(agent.type))}</span>
-            ${agent.enabled ? '<span class="badge badge-success">ENABLED</span>' : '<span class="badge badge-muted">DISABLED</span>'}
             ${agent.publishedVersion ? `<span class="badge" style="background:#8b5cf6">RELEASED v${agent.publishedVersion}</span>` : ''}
           </div>
           <p class="agent-description">${escapeHtml(truncate(agent.description || 'No description', 120))}</p>
@@ -969,7 +1000,6 @@ window.editAgent = async (id) => {
     name: a.name,
     type: normalizeAgentType(a.type),
     description: a.description,
-    enabled: a.enabled,
   };
   await renderUserAgentsPage();
 };
@@ -983,7 +1013,6 @@ window.saveAgent = async () => {
   formData.append('name', state.agentForm.name);
   formData.append('type', normalizeAgentType(state.agentForm.type));
   formData.append('description', state.agentForm.description);
-  formData.append('enabled', state.agentForm.enabled);
 
   if (!state.agentForm.name) {
     return alert('Name is required');

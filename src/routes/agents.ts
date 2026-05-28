@@ -58,14 +58,12 @@ async function allowPublicOrDownloadAuth(req: Request, res: Response, next: Next
   }
 
   (req as any).agent = agent;
-  if (agent.enabled) {
-    const requestedVersion = req.params.version ? Number(req.params.version) : undefined;
-    const published = await db.getPublishedVersion(req.params.id);
-    const hasAuthKey = Boolean(req.headers.authorization || req.headers['x-api-key'] || req.query.apiKey || req.query.downloadKey);
-    if (published && !hasAuthKey && (requestedVersion === undefined || published.version === requestedVersion)) {
-      (req as any).publicVersion = published.version;
-      return next();
-    }
+  const requestedVersion = req.params.version ? Number(req.params.version) : undefined;
+  const published = await db.getPublishedVersion(req.params.id);
+  const hasAuthKey = Boolean(req.headers.authorization || req.headers['x-api-key'] || req.query.apiKey || req.query.downloadKey);
+  if (published && !hasAuthKey && (requestedVersion === undefined || published.version === requestedVersion)) {
+    (req as any).publicVersion = published.version;
+    return next();
   }
 
   requireDownloadAuth(req, res, next);
@@ -95,7 +93,6 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
     return res.status(400).json({ error: 'agentFile (ZIP) is required' });
   }
 
-  const enabled = req.body.enabled === undefined ? true : req.body.enabled === 'true' || req.body.enabled === true;
   let selectedTags: string[] | undefined;
   let selectedType: string;
   try {
@@ -114,7 +111,6 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
     filename: req.file.originalname,
     fileSize: req.file.size,
     fileHash,
-    enabled,
     avatar,
     tags: selectedTags,
     isPublic: false,
@@ -142,7 +138,6 @@ router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (
     }
   }
   if (req.body.description !== undefined) patch.description = req.body.description;
-  if (req.body.enabled !== undefined) patch.enabled = req.body.enabled === 'true' || req.body.enabled === true;
   if (req.body.tags !== undefined) {
     try {
       patch.tags = await validateManagedTags((req as any).userId, req.body.tags);

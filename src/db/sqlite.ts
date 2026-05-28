@@ -57,7 +57,6 @@ db.exec(`
     filename TEXT NOT NULL,
     file_size INTEGER NOT NULL DEFAULT 0,
     file_hash TEXT NOT NULL,
-    enabled INTEGER NOT NULL,
     is_public INTEGER NOT NULL DEFAULT 0,
     tags_json TEXT,
     download_count INTEGER NOT NULL DEFAULT 0,
@@ -170,6 +169,10 @@ function migrateSchema(): void {
           AND existing.name = 'currentdir'
       )
   `).run();
+
+  if (sqliteColumns('agents').has('enabled')) {
+    db.prepare('ALTER TABLE agents DROP COLUMN enabled').run();
+  }
 }
 
 migrateSchema();
@@ -185,7 +188,6 @@ function rowToAgent(row: Record<string, unknown>): AgentConfig {
     filename: row.filename as string,
     fileSize: Number(row.file_size || 0),
     fileHash: row.file_hash as string,
-    enabled: Boolean(row.enabled),
     tags: tryParseJson(row.tags_json as string),
     isPublic: Boolean(row.is_public),
     publishedVersion: row.published_version === undefined || row.published_version === null ? undefined : Number(row.published_version),
@@ -207,7 +209,6 @@ function agentToRow(agent: Partial<AgentConfig>): Record<string, unknown> {
   if (agent.filename !== undefined) row.filename = agent.filename;
   if (agent.fileSize !== undefined) row.file_size = agent.fileSize;
   if (agent.fileHash !== undefined) row.file_hash = agent.fileHash;
-  if (agent.enabled !== undefined) row.enabled = agent.enabled ? 1 : 0;
   if (agent.tags !== undefined) row.tags_json = JSON.stringify(agent.tags);
   if (agent.isPublic !== undefined) row.is_public = agent.isPublic ? 1 : 0;
   if (agent.downloadCount !== undefined) row.download_count = agent.downloadCount;
@@ -476,7 +477,6 @@ export async function createAgent(userId: string, data: Partial<AgentConfig> & {
     filename: data.filename,
     fileSize: data.fileSize,
     fileHash: data.fileHash,
-    enabled: data.enabled !== false,
     tags: data.tags,
     isPublic: data.isPublic || false,
     downloadCount: 0,
@@ -484,8 +484,8 @@ export async function createAgent(userId: string, data: Partial<AgentConfig> & {
     createdAt: now,
     updatedAt: now,
   };
-  const insert = db.prepare(`INSERT INTO agents (id,user_id,name,agent_type,avatar,description,filename,file_size,file_hash,enabled,is_public,tags_json,download_count,likes_count,share_token,share_password,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  insert.run(agent.id, agent.userId, agent.name, agent.type, null, agent.description, agent.filename, agent.fileSize, agent.fileHash, agent.enabled ? 1 : 0, agent.isPublic ? 1 : 0, JSON.stringify(agent.tags || []), agent.downloadCount, agent.likesCount, null, null, agent.createdAt, agent.updatedAt);
+  const insert = db.prepare(`INSERT INTO agents (id,user_id,name,agent_type,avatar,description,filename,file_size,file_hash,is_public,tags_json,download_count,likes_count,share_token,share_password,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  insert.run(agent.id, agent.userId, agent.name, agent.type, null, agent.description, agent.filename, agent.fileSize, agent.fileHash, agent.isPublic ? 1 : 0, JSON.stringify(agent.tags || []), agent.downloadCount, agent.likesCount, null, null, agent.createdAt, agent.updatedAt);
   return agent;
 }
 
@@ -628,7 +628,6 @@ export async function getPublicAgents(): Promise<AgentConfig[]> {
     SELECT a.*, published.version AS published_version
     FROM agents a
     JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
-    WHERE a.enabled = 1
     ORDER BY a.download_count DESC, a.updated_at DESC
   `).all().map((row: unknown) => rowToAgent(row as Record<string, unknown>));
 }

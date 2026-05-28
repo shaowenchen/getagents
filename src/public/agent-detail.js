@@ -29,7 +29,6 @@ async function renderAgentDetail(agentId) {
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.35rem">
               <h2 style="font-size:1.2rem;letter-spacing:-0.01em">${escapeHtml(agent.name)}</h2>
-              ${agent.enabled ? '<span class="badge badge-success">Enabled</span>' : '<span class="badge badge-muted">Disabled</span>'}
               ${agent.publishedVersion ? `<span class="badge" style="background:#8b5cf6">Released v${agent.publishedVersion}</span>` : ''}
             </div>
             <p style="color:var(--muted);line-height:1.5">${escapeHtml(agent.description || 'No description')}</p>

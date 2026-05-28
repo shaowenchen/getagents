@@ -68,7 +68,6 @@ async function init(): Promise<void> {
       filename TEXT NOT NULL,
       file_size INT NOT NULL DEFAULT 0,
       file_hash VARCHAR(128) NOT NULL,
-      enabled TINYINT(1) NOT NULL,
       is_public TINYINT(1) NOT NULL DEFAULT 0,
       tags_json JSON,
       download_count INT NOT NULL DEFAULT 0,
@@ -185,6 +184,10 @@ async function migrateSchema(db: Pool): Promise<void> {
       ON existing.user_id = mat.user_id AND existing.name = 'currentdir'
     WHERE mat.name = 'workspace'
   `);
+
+  if (await mysqlColumnExists(db, 'agents', 'enabled')) {
+    await db.query('ALTER TABLE agents DROP COLUMN enabled');
+  }
 }
 
 function requirePool(): Pool {
@@ -226,7 +229,7 @@ function parseDsn(value: string): PoolOptions {
 type AgentRow = RowDataPacket & {
   id: string; user_id: string; name: string; agent_type: string; avatar: string | null; description: string;
   filename: string; file_size: number; file_hash: string;
-  enabled: number; is_public: number; tags_json: string | null;
+  is_public: number; tags_json: string | null;
   download_count: number; likes_count: number;
   share_token: string | null; share_password: string | null; published_version?: number | null;
   created_at: number; updated_at: number;
@@ -266,7 +269,6 @@ function toAgent(row: AgentRow): AgentConfig {
     type: (row.agent_type as AgentConfig['type']) || 'currentdir',
     description: row.description, filename: row.filename,
     fileSize: Number(row.file_size || 0), fileHash: row.file_hash,
-    enabled: Boolean(row.enabled),
     tags: parseJson<string[] | undefined>(row.tags_json, undefined),
     isPublic: Boolean(row.is_public),
     publishedVersion: row.published_version === undefined || row.published_version === null ? undefined : Number(row.published_version),
@@ -342,13 +344,13 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
   await db.execute(`
     INSERT INTO agents (
       id, user_id, name, agent_type, avatar, description, filename, file_size, file_hash,
-      enabled, is_public, tags_json, download_count, likes_count,
+      is_public, tags_json, download_count, likes_count,
       share_token, share_password, created_at, updated_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON DUPLICATE KEY UPDATE
       name=VALUES(name), agent_type=VALUES(agent_type), avatar=VALUES(avatar), description=VALUES(description),
       filename=VALUES(filename), file_size=VALUES(file_size), file_hash=VALUES(file_hash),
-      enabled=VALUES(enabled), is_public=VALUES(is_public),
+      is_public=VALUES(is_public),
       tags_json=VALUES(tags_json),
       download_count=VALUES(download_count), likes_count=VALUES(likes_count),
       share_token=VALUES(share_token), share_password=VALUES(share_password),
@@ -356,7 +358,7 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
   `, [
     agent.id, agent.userId, agent.name, agent.type, agent.avatar ?? null, agent.description,
     agent.filename, agent.fileSize, agent.fileHash,
-    agent.enabled ? 1 : 0, agent.isPublic ? 1 : 0,
+    agent.isPublic ? 1 : 0,
     stringifyOptional(agent.tags),
     agent.downloadCount || 0, agent.likesCount || 0,
     agent.shareToken ?? null, agent.sharePassword ?? null,
@@ -641,7 +643,6 @@ export async function createAgent(userId: string, input: Partial<AgentConfig> & 
     filename: input.filename,
     fileSize: input.fileSize,
     fileHash: input.fileHash,
-    enabled: input.enabled !== false,
     tags: input.tags,
     isPublic: input.isPublic || false,
     downloadCount: 0,
@@ -796,7 +797,6 @@ export async function getPublicAgents(): Promise<AgentConfig[]> {
     `SELECT a.*, published.version AS published_version
      FROM agents a
      JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
-     WHERE a.enabled = 1
      ORDER BY a.download_count DESC, a.updated_at DESC`
   );
   return rows.map(toAgent);

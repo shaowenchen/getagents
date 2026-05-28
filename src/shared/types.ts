@@ -10,7 +10,6 @@ export interface AgentConfig {
   filename: string;
   fileSize: number;
   fileHash: string;
-  enabled: boolean;
   tags?: string[];
   isPublic: boolean;
   publishedVersion?: number;

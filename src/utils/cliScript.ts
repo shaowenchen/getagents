@@ -34,7 +34,6 @@ AGENT_NAME=""
 DESCRIPTION=""
 TAGS=""
 COMMENT=""
-ENABLED=""
 
 usage() {
   cat <<EOF
@@ -49,7 +48,6 @@ Usage: bash upload.sh [options]
   -d, --description TEXT   Description (only applied on create / when provided)
   -t, --tags "a,b,c"       Comma-separated tags
       --comment TEXT       Version comment (shown in version history)
-      --enabled true|false
   -h, --help               Show this help
 
 Examples:
@@ -80,7 +78,6 @@ while [[ \$# -gt 0 ]]; do
     -d|--description)  DESCRIPTION="\${2:-}"; shift 2 ;;
     -t|--tags)         TAGS="\${2:-}"; shift 2 ;;
     --comment)         COMMENT="\${2:-}"; shift 2 ;;
-    --enabled)         ENABLED="\${2:-}"; shift 2 ;;
     -h|--help)         usage; exit 0 ;;
     *)                 echo "Unknown option: \$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -223,7 +220,6 @@ CURL_ARGS=(-fsSL -X POST
 [[ -n "\$DESCRIPTION" ]]  && CURL_ARGS+=(-F "description=\$DESCRIPTION")
 [[ -n "\$TAGS" ]]         && CURL_ARGS+=(-F "tags=\$TAGS")
 [[ -n "\$COMMENT" ]]      && CURL_ARGS+=(-F "comment=\$COMMENT")
-[[ -n "\$ENABLED" ]]      && CURL_ARGS+=(-F "enabled=\$ENABLED")
 
 UPLOAD_URL="\${ENDPOINT%/}/api/cli/upload"
 info "Uploading to \$UPLOAD_URL ..."

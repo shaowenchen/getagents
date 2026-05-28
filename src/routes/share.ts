@@ -44,7 +44,6 @@ router.post('/:token/install', requireAuth, asyncHandler(async (req, res) => {
     fileSize: agent.fileSize,
     fileHash: agent.fileHash,
     tags: agent.tags,
-    enabled: true,
     isPublic: false,
   });
 

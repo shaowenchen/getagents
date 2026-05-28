@@ -38,7 +38,6 @@ function createAgentForm() {
     name: '',
     type: 'currentdir',
     description: '',
-    enabled: true,
   };
 }
 

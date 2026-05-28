@@ -11,7 +11,7 @@ import { join } from 'path';
 import { mkdirSync, existsSync, copyFileSync, rmSync, createReadStream, createWriteStream } from 'fs';
 import { readdir, stat } from 'fs/promises';
 import { Readable } from 'stream';
-import { pipeline } from 'stream/promises';
+import { finished, pipeline } from 'stream/promises';
 import crypto from 'crypto';
 
 const AGENTS_ROOT = join(homedir(), '.getagents', 'agents');
@@ -190,11 +190,13 @@ async function saveAgfsAgentFile(agentId: string, version: number, buffer: Buffe
 }
 
 async function putAgfsFile(path: string, sourcePath: string): Promise<void> {
+  const body = createReadStream(sourcePath);
   await agfsFetch('files', path, {
     method: 'PUT',
-    body: createReadStream(sourcePath),
+    body,
     duplex: 'half',
   } as FetchInitWithDuplex);
+  await finished(body);
 }
 
 async function saveAgfsAgentFileFromPath(agentId: string, version: number, sourcePath: string): Promise<string> {
@@ -215,13 +217,15 @@ async function putS3Object(key: string, buffer: Buffer): Promise<void> {
 
 async function putS3ObjectFromPath(key: string, sourcePath: string): Promise<void> {
   const source = await stat(sourcePath);
+  const body = createReadStream(sourcePath);
   await s3.send(new PutObjectCommand({
     Bucket: S3_BUCKET,
     Key: key,
-    Body: createReadStream(sourcePath),
+    Body: body,
     ContentLength: source.size,
     ContentType: 'application/zip',
   }));
+  await finished(body);
 }
 
 async function saveS3AgentFile(agentId: string, version: number, buffer: Buffer): Promise<string> {

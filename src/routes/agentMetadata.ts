@@ -42,6 +42,13 @@ export async function cleanupUploadedFile(file?: Express.Multer.File): Promise<v
   if (file?.path) await unlink(file.path).catch(() => undefined);
 }
 
+export function validateUploadSize(value: unknown): number {
+  const size = Number(value || 0);
+  if (!Number.isFinite(size) || size <= 0) throw new Error('fileSize is required');
+  if (size > maxUploadSize) throw new Error(`fileSize exceeds ${Math.floor(maxUploadSize / 1024 / 1024)}MB limit`);
+  return size;
+}
+
 export async function validateManagedTags(userId: string, value: unknown): Promise<string[] | undefined> {
   const tags = parseTagInput(value);
   if (tags === undefined) return undefined;

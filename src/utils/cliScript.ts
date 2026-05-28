@@ -211,7 +211,83 @@ if [[ ! -s "\$ZIP_PATH" ]]; then
 fi
 
 SIZE_BYTES=\$(wc -c < "\$ZIP_PATH" | tr -d ' ')
+if command -v sha256sum >/dev/null 2>&1; then
+  FILE_HASH="\$(sha256sum "\$ZIP_PATH" | awk '{print \$1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  FILE_HASH="\$(shasum -a 256 "\$ZIP_PATH" | awk '{print \$1}')"
+else
+  FILE_HASH=""
+fi
 info "Archive: \$ZIP_PATH (\${SIZE_BYTES} bytes)"
+
+json_payload() {
+  python3 - "\$@" <<'PYEOF'
+import json, sys
+keys = [
+    'agentId', 'name', 'type', 'description', 'tags', 'comment',
+    'filename', 'fileSize', 'fileHash', 'directKey'
+]
+payload = {}
+for key, value in zip(keys, sys.argv[1:]):
+    if value != '':
+        if key == 'fileSize':
+            payload[key] = int(value)
+        else:
+            payload[key] = value
+print(json.dumps(payload, separators=(',', ':')))
+PYEOF
+}
+
+json_field() {
+  python3 - "\$1" "\$2" <<'PYEOF'
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    value = data
+    for part in sys.argv[2].split('.'):
+        value = value.get(part, '') if isinstance(value, dict) else ''
+    if isinstance(value, (dict, list)):
+        print(json.dumps(value, separators=(',', ':')))
+    elif value is None:
+        print('')
+    else:
+        print(value)
+except Exception:
+    print('')
+PYEOF
+}
+
+try_direct_upload() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  [[ -n "\$FILE_HASH" ]] || return 1
+
+  local init_url="\${ENDPOINT%/}/api/cli/upload/direct/init"
+  local complete_url="\${ENDPOINT%/}/api/cli/upload/direct/complete"
+  local filename="\$(basename "\$ZIP_PATH")"
+  local payload response direct upload_url direct_key complete_payload
+
+  payload="\$(json_payload "\$AGENT_ID" "\$AGENT_NAME" "\$AGENT_TYPE" "\$DESCRIPTION" "\$TAGS" "\$COMMENT" "\$filename" "\$SIZE_BYTES" "\$FILE_HASH" "")"
+  response="\$(curl -fsSL -X POST -H "X-API-Key: \$API_KEY" -H "Content-Type: application/json" --data "\$payload" "\$init_url" 2>/dev/null)" || return 1
+  direct="\$(json_field "\$response" direct)"
+  [[ "\$direct" == "True" || "\$direct" == "true" ]] || return 1
+  upload_url="\$(json_field "\$response" url)"
+  direct_key="\$(json_field "\$response" key)"
+  [[ -n "\$upload_url" && -n "\$direct_key" ]] || return 1
+
+  info "Direct uploading to object storage ..."
+  curl -fsSL -X PUT -H "Content-Type: application/zip" --upload-file "\$ZIP_PATH" "\$upload_url" >/dev/null || return 1
+
+  complete_payload="\$(json_payload "\$AGENT_ID" "\$AGENT_NAME" "\$AGENT_TYPE" "\$DESCRIPTION" "\$TAGS" "\$COMMENT" "\$filename" "\$SIZE_BYTES" "\$FILE_HASH" "\$direct_key")"
+  RESPONSE="\$(curl -fsSL -X POST -H "X-API-Key: \$API_KEY" -H "Content-Type: application/json" --data "\$complete_payload" "\$complete_url")" || return 1
+  echo "\$RESPONSE"
+  info "Done."
+  return 0
+}
+
+if try_direct_upload; then
+  exit 0
+fi
+info "Direct upload unavailable or failed; falling back to GetAgents relay upload ..."
 
 # Build curl form arguments
 CURL_ARGS=(-fsSL -X POST

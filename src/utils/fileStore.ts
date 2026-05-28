@@ -6,6 +6,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { homedir } from 'os';
 import { join } from 'path';
 import { mkdirSync, existsSync, copyFileSync, rmSync, createReadStream, createWriteStream } from 'fs';
@@ -103,6 +104,15 @@ function s3UploadKey(agentId: string, fileName: string): string {
 
 function s3DownloadKey(agentId: string, fileName: string): string {
   return s3Key('downloads', agentId, fileName);
+}
+
+function s3DirectUploadKey(userId: string, uploadId: string, fileName: string): string {
+  return s3Key('direct', userId, uploadId, fileName);
+}
+
+function assertDirectUploadKey(userId: string, key: string): void {
+  const prefix = s3Key('direct', userId) + '/';
+  if (!key.startsWith(prefix)) throw new Error('Invalid direct upload key');
 }
 
 function isReadableStream(value: unknown): value is NodeJS.ReadableStream {
@@ -257,6 +267,25 @@ async function putS3ObjectFromPath(key: string, sourcePath: string): Promise<voi
   await finished(body);
 }
 
+async function copyS3Object(sourceKey: string, targetKey: string): Promise<void> {
+  await s3.send(new CopyObjectCommand({
+    Bucket: S3_BUCKET,
+    CopySource: encodeURIComponent(`${S3_BUCKET}/${sourceKey}`),
+    Key: targetKey,
+    ContentType: 'application/zip',
+  }));
+}
+
+async function deleteS3Object(key: string): Promise<void> {
+  await s3.send(new DeleteObjectsCommand({
+    Bucket: S3_BUCKET,
+    Delete: {
+      Objects: [{ Key: key }],
+      Quiet: true,
+    },
+  }));
+}
+
 async function saveS3AgentFile(agentId: string, version: number, buffer: Buffer): Promise<string> {
   await putS3Object(s3UploadKey(agentId, versionFileName(version)), buffer);
   await putS3Object(s3DownloadKey(agentId, 'current.zip'), buffer);
@@ -279,6 +308,35 @@ async function saveAgentFileFromPath(agentId: string, version: number, sourcePat
   if (STORAGE_DRIVER === 'agfs') return saveAgfsAgentFileFromPath(agentId, version, sourcePath);
   if (STORAGE_DRIVER === 's3') return saveS3AgentFileFromPath(agentId, version, sourcePath);
   return saveLocalAgentFileFromPath(agentId, version, sourcePath);
+}
+
+function supportsDirectAgentUpload(): boolean {
+  return STORAGE_DRIVER === 's3';
+}
+
+async function createDirectAgentUpload(userId: string, fileName = 'agent.zip'): Promise<{ key: string; url: string; headers: Record<string, string>; expiresIn: number }> {
+  if (!supportsDirectAgentUpload()) throw new Error('Direct upload is only supported for S3 storage');
+
+  const uploadId = crypto.randomUUID();
+  const safeFileName = fileName.toLowerCase().endsWith('.zip') ? fileName : 'agent.zip';
+  const key = s3DirectUploadKey(userId, uploadId, safeFileName);
+  const command = new PutObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: key,
+    ContentType: 'application/zip',
+  });
+  const expiresIn = Number(process.env.S3_DIRECT_UPLOAD_EXPIRES_SECONDS || 900);
+  const url = await getSignedUrl(s3, command, { expiresIn });
+  return { key, url, headers: { 'Content-Type': 'application/zip' }, expiresIn };
+}
+
+async function commitDirectAgentUpload(userId: string, sourceKey: string, agentId: string, version: number): Promise<void> {
+  if (!supportsDirectAgentUpload()) throw new Error('Direct upload is only supported for S3 storage');
+  assertDirectUploadKey(userId, sourceKey);
+
+  await copyS3Object(sourceKey, s3UploadKey(agentId, versionFileName(version)));
+  await copyS3Object(sourceKey, s3DownloadKey(agentId, 'current.zip'));
+  await deleteS3Object(sourceKey);
 }
 
 function getAgentFilePath(agentId: string, version?: number): string {
@@ -554,6 +612,9 @@ export {
   hashAgentFile,
   saveAgentFile,
   saveAgentFileFromPath,
+  supportsDirectAgentUpload,
+  createDirectAgentUpload,
+  commitDirectAgentUpload,
   getAgentFilePath,
   copyAgentFiles,
   deleteAgentFiles,

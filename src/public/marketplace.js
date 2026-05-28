@@ -63,7 +63,7 @@ function renderMarketplaceCard(agent) {
   const initial = agentInitial(agent);
   const color = avatarColor(agent.name);
   const fileLabel = formatFileSize(agent.fileSize || 0);
-  const typeLabel = agent.type || 'workspace';
+  const typeLabel = agent.type || 'currentdir';
   const expanded = state.marketplaceExpandedAgentId === agent.id;
   const commandId = `mp-restore-cmd-${agent.id}`;
 

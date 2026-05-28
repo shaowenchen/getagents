@@ -36,7 +36,7 @@ const state = {
 function createAgentForm() {
   return {
     name: '',
-    type: 'workspace',
+    type: 'currentdir',
     description: '',
     enabled: true,
   };

@@ -148,7 +148,7 @@ Example:
 
 ```bash
 GETAGENTS_API_KEY=user-xxx bash <(curl -fsSL http://localhost:3000/getagents/cli/upload.sh) \
-  --type workspace \
+  --type currentdir \
   --name 'My Agent' \
   --description 'What this agent does'
 ```
@@ -158,7 +158,7 @@ Agent types are managed from the Admin page. Each type can define one or more ba
 Default type presets are created for each user:
 
 ```text
-workspace    ${PWD}
+currentdir   ${PWD}
 cursor       ${HOME}/.cursor
 claude       ${HOME}/.claude
 codex        ${HOME}/.codex

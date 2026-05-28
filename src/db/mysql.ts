@@ -62,7 +62,7 @@ async function init(): Promise<void> {
       id VARCHAR(64) PRIMARY KEY,
       user_id VARCHAR(64) NOT NULL,
       name VARCHAR(255) NOT NULL,
-      agent_type VARCHAR(32) NOT NULL DEFAULT 'workspace',
+      agent_type VARCHAR(32) NOT NULL DEFAULT 'currentdir',
       avatar TEXT,
       description TEXT NOT NULL,
       filename TEXT NOT NULL,
@@ -133,7 +133,7 @@ async function migrateSchema(db: Pool): Promise<void> {
   await ensureMysqlColumn(db, 'users', 'login_key', 'TEXT');
   await ensureMysqlColumn(db, 'users', 'upload_key', 'TEXT');
   await ensureMysqlColumn(db, 'users', 'download_key', 'TEXT');
-  await ensureMysqlColumn(db, 'agents', 'agent_type', "VARCHAR(32) NOT NULL DEFAULT 'workspace'");
+  await ensureMysqlColumn(db, 'agents', 'agent_type', "VARCHAR(32) NOT NULL DEFAULT 'currentdir'");
   await ensureMysqlColumn(db, 'agents', 'is_public', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureMysqlColumn(db, 'agents', 'likes_count', 'INT NOT NULL DEFAULT 0');
   await ensureMysqlColumn(db, 'agents', 'share_token', 'VARCHAR(64)');
@@ -168,6 +168,23 @@ async function migrateSchema(db: Pool): Promise<void> {
         AND existing.agent_id IS NULL
     `);
   }
+
+  await db.query(`
+    UPDATE managed_agent_types mat
+    LEFT JOIN managed_agent_types existing
+      ON existing.user_id = mat.user_id AND existing.name = 'currentdir'
+    SET mat.name = 'currentdir'
+    WHERE mat.name = 'workspace'
+      AND existing.id IS NULL
+  `);
+  await db.query("UPDATE agents SET agent_type = 'currentdir' WHERE agent_type = 'workspace'");
+  await db.query(`
+    DELETE mat
+    FROM managed_agent_types mat
+    JOIN managed_agent_types existing
+      ON existing.user_id = mat.user_id AND existing.name = 'currentdir'
+    WHERE mat.name = 'workspace'
+  `);
 }
 
 function requirePool(): Pool {
@@ -246,7 +263,7 @@ function stringifyOptional(value: unknown): string | null {
 function toAgent(row: AgentRow): AgentConfig {
   return {
     id: row.id, userId: row.user_id, name: row.name, avatar: row.avatar ?? undefined,
-    type: (row.agent_type as AgentConfig['type']) || 'workspace',
+    type: (row.agent_type as AgentConfig['type']) || 'currentdir',
     description: row.description, filename: row.filename,
     fileSize: Number(row.file_size || 0), fileHash: row.file_hash,
     enabled: Boolean(row.enabled),
@@ -282,7 +299,7 @@ function toManagedAgentType(row: ManagedAgentTypeRow): ManagedAgentType {
 }
 
 const defaultAgentTypes = [
-  { name: 'workspace', backupDirs: ['${PWD}'] },
+  { name: 'currentdir', backupDirs: ['${PWD}'] },
   { name: 'cursor', backupDirs: ['${HOME}/.cursor'] },
   { name: 'claude', backupDirs: ['${HOME}/.claude'] },
   { name: 'codex', backupDirs: ['${HOME}/.codex'] },
@@ -577,7 +594,7 @@ export async function deleteManagedAgentType(userId: string, typeId: string): Pr
   if (result.affectedRows > 0) {
     await db.execute(
       'UPDATE agents SET agent_type = ?, updated_at = ? WHERE user_id = ? AND agent_type = ?',
-      ['workspace', Date.now(), userId, type.name]
+      ['currentdir', Date.now(), userId, type.name]
     );
   }
   return result.affectedRows > 0;
@@ -619,7 +636,7 @@ export async function createAgent(userId: string, input: Partial<AgentConfig> & 
     id: uuid(),
     userId,
     name: input.name || '',
-    type: input.type || 'workspace',
+    type: input.type || 'currentdir',
     description: input.description || '',
     filename: input.filename,
     fileSize: input.fileSize,

@@ -43,7 +43,7 @@ function parseBool(value: unknown, defaultValue: boolean): boolean {
 }
 
 async function validateAgentType(userId: string, value: unknown): Promise<string> {
-  const type = String(value || 'workspace').trim();
+  const type = String(value || 'currentdir').trim();
   const allowed = new Set((await db.getManagedAgentTypes(userId)).map((item) => item.name));
   if (!allowed.has(type)) throw new Error(`Unknown type: ${type}`);
   return type;

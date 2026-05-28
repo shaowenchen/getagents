@@ -53,7 +53,7 @@ db.exec(`
     name TEXT NOT NULL,
     avatar TEXT,
     description TEXT NOT NULL,
-    agent_type TEXT NOT NULL DEFAULT 'workspace',
+    agent_type TEXT NOT NULL DEFAULT 'currentdir',
     filename TEXT NOT NULL,
     file_size INTEGER NOT NULL DEFAULT 0,
     file_hash TEXT NOT NULL,
@@ -109,7 +109,7 @@ function migrateSchema(): void {
   ensureSqliteColumn('users', 'login_key', 'TEXT');
   ensureSqliteColumn('users', 'upload_key', 'TEXT');
   ensureSqliteColumn('users', 'download_key', 'TEXT');
-  ensureSqliteColumn('agents', 'agent_type', "TEXT NOT NULL DEFAULT 'workspace'");
+  ensureSqliteColumn('agents', 'agent_type', "TEXT NOT NULL DEFAULT 'currentdir'");
   ensureSqliteColumn('agents', 'is_public', 'INTEGER NOT NULL DEFAULT 0');
   ensureSqliteColumn('agents', 'likes_count', 'INTEGER NOT NULL DEFAULT 0');
   ensureSqliteColumn('agents', 'share_token', 'TEXT');
@@ -149,6 +149,27 @@ function migrateSchema(): void {
       )
     `).run();
   }
+
+  db.prepare(`
+    UPDATE managed_agent_types
+    SET name = 'currentdir'
+    WHERE name = 'workspace'
+      AND NOT EXISTS (
+        SELECT 1 FROM managed_agent_types existing
+        WHERE existing.user_id = managed_agent_types.user_id
+          AND existing.name = 'currentdir'
+      )
+  `).run();
+  db.prepare("UPDATE agents SET agent_type = 'currentdir' WHERE agent_type = 'workspace'").run();
+  db.prepare(`
+    DELETE FROM managed_agent_types
+    WHERE name = 'workspace'
+      AND EXISTS (
+        SELECT 1 FROM managed_agent_types existing
+        WHERE existing.user_id = managed_agent_types.user_id
+          AND existing.name = 'currentdir'
+      )
+  `).run();
 }
 
 migrateSchema();
@@ -158,7 +179,7 @@ function rowToAgent(row: Record<string, unknown>): AgentConfig {
     id: row.id as string,
     userId: row.user_id as string,
     name: row.name as string,
-    type: (row.agent_type as AgentConfig['type']) || 'workspace',
+    type: (row.agent_type as AgentConfig['type']) || 'currentdir',
     avatar: (row.avatar as string) || undefined,
     description: row.description as string,
     filename: row.filename as string,
@@ -232,7 +253,7 @@ function rowToManagedAgentType(row: Record<string, unknown>): ManagedAgentType {
 }
 
 const defaultAgentTypes = [
-  { name: 'workspace', backupDirs: ['${PWD}'] },
+  { name: 'currentdir', backupDirs: ['${PWD}'] },
   { name: 'cursor', backupDirs: ['${HOME}/.cursor'] },
   { name: 'claude', backupDirs: ['${HOME}/.claude'] },
   { name: 'codex', backupDirs: ['${HOME}/.codex'] },
@@ -414,7 +435,7 @@ export async function deleteManagedAgentType(userId: string, typeId: string): Pr
   const result = db.prepare('DELETE FROM managed_agent_types WHERE id = ? AND user_id = ?').run(typeId, userId);
   if (result.changes > 0) {
     db.prepare('UPDATE agents SET agent_type = ?, updated_at = ? WHERE user_id = ? AND agent_type = ?')
-      .run('workspace', Date.now(), userId, type.name);
+      .run('currentdir', Date.now(), userId, type.name);
   }
   return result.changes > 0;
 }
@@ -450,7 +471,7 @@ export async function createAgent(userId: string, data: Partial<AgentConfig> & {
     id,
     userId,
     name: data.name || '',
-    type: data.type || 'workspace',
+    type: data.type || 'currentdir',
     description: data.description || '',
     filename: data.filename,
     fileSize: data.fileSize,

@@ -44,7 +44,7 @@ router.get('/tags', asyncHandler(async (_req, res) => {
 
 router.get('/types', asyncHandler(async (_req, res) => {
   const agents = await db.getPublicAgents();
-  const types = [...new Set(agents.map(a => a.type || 'workspace').filter(Boolean))].sort();
+  const types = [...new Set(agents.map(a => a.type || 'currentdir').filter(Boolean))].sort();
   res.json({ types });
 }));
 

@@ -196,14 +196,46 @@ function renderProfileKeyRow(label, optional, keyValue, codeId, keyType) {
       <span class="field-label">${label}${optional ? `<span class="field-optional">${optional}</span>` : ''}</span>
       <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
         <div style="flex:1;min-width:260px">
-          ${keyValue ? `<code id="${codeId}" class="cli-code cli-mini">${escapeHtml(keyValue)}</code>` : missingKey}
+          ${keyValue ? `<code id="${codeId}" class="cli-code cli-mini" data-profile-key-type="${keyType}" data-visible="false">********</code>` : missingKey}
         </div>
-        ${keyValue ? `<button class="btn-ghost" onclick="copyCliCommand('${codeId}')">Copy</button>` : ''}
+        ${keyValue ? `
+          <button id="${codeId}-toggle" class="btn-ghost" onclick="toggleProfileKey('${codeId}')">Show</button>
+          <button class="btn-ghost" onclick="copyProfileKey('${codeId}')">Copy</button>
+        ` : ''}
         <button class="btn-ghost btn-danger" onclick="resetCurrentUserKey('${keyType}')">Reset</button>
       </div>
     </label>
   `;
 }
+
+function profileKeyValue(keyType) {
+  if (keyType === 'login') return getAdminApiKey();
+  if (keyType === 'upload') return getUploadApiKey();
+  if (keyType === 'download') return getDownloadApiKey();
+  return '';
+}
+
+window.toggleProfileKey = (codeId) => {
+  const el = document.getElementById(codeId);
+  if (!el) return;
+  const isVisible = el.dataset.visible === 'true';
+  el.dataset.visible = isVisible ? 'false' : 'true';
+  el.textContent = isVisible ? '********' : profileKeyValue(el.dataset.profileKeyType);
+  const toggle = document.getElementById(`${codeId}-toggle`);
+  if (toggle) toggle.textContent = isVisible ? 'Show' : 'Hide';
+};
+
+window.copyProfileKey = async (codeId) => {
+  const el = document.getElementById(codeId);
+  if (!el) return;
+  const key = profileKeyValue(el.dataset.profileKeyType);
+  try {
+    await navigator.clipboard.writeText(key);
+    toast('Key copied to clipboard');
+  } catch {
+    toast('Unable to copy key');
+  }
+};
 
 function keyTypeLabel(keyType) {
   if (keyType === 'login') return 'login';
@@ -263,12 +295,6 @@ async function renderProfilePage() {
           <p class="text-muted" style="margin:0.2rem 0 0">${currentUsername() === 'admin' ? 'Administrator' : 'User'}</p>
         </div>
       </div>
-      <div class="form-group" style="margin-top:1rem">
-        <label class="field">
-          <span class="field-label">User ID</span>
-          <input value="${escapeHtml(user.userId || '')}" readonly>
-        </label>
-      </div>
     </div>
     <div class="card">
       <h3 style="margin:0 0 0.75rem">Keys</h3>
@@ -276,6 +302,10 @@ async function renderProfilePage() {
         ${renderProfileKeyRow('Login API Key', '', apiKey, 'profile-login-key', 'login')}
         ${renderProfileKeyRow('Upload API Key', 'GETAGENTS_API_KEY / X-API-Key', uploadKey, 'profile-upload-key', 'upload')}
         ${renderProfileKeyRow('Download API Key', 'downloadKey query / X-API-Key', downloadKey, 'profile-download-key', 'download')}
+        <label class="field">
+          <span class="field-label">User ID</span>
+          <input value="${escapeHtml(user.userId || '')}" readonly>
+        </label>
       </div>
     </div>
   `);
@@ -483,7 +513,7 @@ function shellQuote(value) {
 
 function normalizeAgentType(type) {
   const options = state.typeOptions || [];
-  return options.some(option => option.name === type) ? type : (options[0]?.name || 'workspace');
+  return options.some(option => option.name === type) ? type : (options[0]?.name || 'currentdir');
 }
 
 function findAgentType(type) {
@@ -639,7 +669,7 @@ window.editManagedType = async (id) => {
 };
 
 window.deleteManagedType = async (id) => {
-  if (!confirm('Delete this type? Existing agents using it will be moved to workspace.')) return;
+  if (!confirm('Delete this type? Existing agents using it will be moved to currentdir.')) return;
   try {
     await api(`/admin/types/${id}`, { method: 'DELETE', admin: true });
     await renderCurrentAuthenticatedPage();
@@ -812,7 +842,10 @@ function renderAgentForm() {
   const isEditing = Boolean(state.editingAgent);
   return `
     <div class="card" style="margin-bottom:1rem">
-      <h3>${isEditing ? 'Edit Agent' : 'New Agent'}</h3>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.75rem">
+        <h3 style="margin:0">${isEditing ? 'Edit Agent' : 'New Agent'}</h3>
+        <button class="btn-ghost" onclick="cancelEdit()">${isEditing ? 'Cancel' : 'Back to list'}</button>
+      </div>
       <div class="form-group">
         <label class="field">
           <span class="field-label">Name<span class="field-required">*</span></span>
@@ -842,7 +875,11 @@ function renderAgentForm() {
           <button class="btn-primary" onclick="saveAgent()">Update</button>
           <button class="btn-ghost" onclick="cancelEdit()">Cancel</button>
         </div>
-        ` : ''}
+        ` : `
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+          <button class="btn-ghost" onclick="cancelEdit()">Back to list</button>
+        </div>
+        `}
       </div>
     </div>
   `;

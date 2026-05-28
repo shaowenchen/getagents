@@ -98,6 +98,11 @@ function s3Key(...parts: string[]): string {
     .join('/');
 }
 
+function s3CopySource(sourceKey: string): string {
+  const encodedKey = sourceKey.split('/').map(encodeURIComponent).join('/');
+  return `${S3_BUCKET}/${encodedKey}`;
+}
+
 function s3UploadKey(agentId: string, fileName: string): string {
   return s3Key('uploads', agentId, fileName);
 }
@@ -270,9 +275,8 @@ async function putS3ObjectFromPath(key: string, sourcePath: string): Promise<voi
 async function copyS3Object(sourceKey: string, targetKey: string): Promise<void> {
   await s3.send(new CopyObjectCommand({
     Bucket: S3_BUCKET,
-    CopySource: encodeURIComponent(`${S3_BUCKET}/${sourceKey}`),
+    CopySource: s3CopySource(sourceKey),
     Key: targetKey,
-    ContentType: 'application/zip',
   }));
 }
 
@@ -452,9 +456,8 @@ async function copyS3AgentFiles(fromAgentId: string, toAgentId: string): Promise
       : s3UploadKey(toAgentId, fileName);
     await s3.send(new CopyObjectCommand({
       Bucket: S3_BUCKET,
-      CopySource: encodeURIComponent(`${S3_BUCKET}/${key}`),
+      CopySource: s3CopySource(key),
       Key: targetKey,
-      ContentType: 'application/zip',
     }));
   }
 }

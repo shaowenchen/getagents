@@ -327,7 +327,6 @@ async function renderProfilePage() {
         <div class="agent-avatar" style="background:#2563eb">${escapeHtml(userInitial())}</div>
         <div>
           <h3 style="margin:0">${escapeHtml(currentUsername())}</h3>
-          <p class="text-muted" style="margin:0.2rem 0 0">${currentUsername() === 'admin' ? 'Administrator' : 'User'}</p>
           <p class="text-muted" style="margin:0.2rem 0 0;font-size:0.82rem">User ID: <code>${escapeHtml(user.userId || '')}</code></p>
         </div>
       </div>

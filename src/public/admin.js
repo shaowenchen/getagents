@@ -328,6 +328,7 @@ async function renderProfilePage() {
         <div>
           <h3 style="margin:0">${escapeHtml(currentUsername())}</h3>
           <p class="text-muted" style="margin:0.2rem 0 0">${currentUsername() === 'admin' ? 'Administrator' : 'User'}</p>
+          <p class="text-muted" style="margin:0.2rem 0 0;font-size:0.82rem">User ID: <code>${escapeHtml(user.userId || '')}</code></p>
         </div>
       </div>
     </div>
@@ -337,10 +338,6 @@ async function renderProfilePage() {
         ${renderProfileKeyRow('Login API Key', '', apiKey, 'profile-login-key', 'login')}
         ${renderProfileKeyRow('Upload API Key', 'GETAGENTS_API_KEY / X-API-Key', uploadKey, 'profile-upload-key', 'upload')}
         ${renderProfileKeyRow('Download API Key', 'downloadKey query / X-API-Key', downloadKey, 'profile-download-key', 'download')}
-        <label class="field">
-          <span class="field-label">User ID</span>
-          <input value="${escapeHtml(user.userId || '')}" readonly>
-        </label>
       </div>
     </div>
   `);

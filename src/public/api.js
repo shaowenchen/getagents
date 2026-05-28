@@ -32,10 +32,6 @@ function apiUrl(path) {
   return apiPrefix + path;
 }
 
-function apiPath(path) {
-  return apiPrefix + path;
-}
-
 function publicUrl(path = '') {
   const base = accessBaseUrl || `${window.location.origin}${routePrefix}`;
   return `${base}${path}`;
@@ -64,10 +60,6 @@ function clearAdminToken() {
 
 function getAdminApiKey() {
   return sessionStorage.getItem(ADMIN_API_KEY_KEY) || '';
-}
-
-function setAdminApiKey(apiKey) {
-  if (apiKey) sessionStorage.setItem(ADMIN_API_KEY_KEY, apiKey);
 }
 
 function getUploadApiKey() {
@@ -143,7 +135,6 @@ export {
   routeHref,
   stripRoutePrefix,
   apiUrl,
-  apiPath,
   publicUrl,
   api,
   apiUpload,
@@ -151,7 +142,6 @@ export {
   setAdminToken,
   clearAdminToken,
   getAdminApiKey,
-  setAdminApiKey,
   getUploadApiKey,
   getDownloadApiKey,
   setUserApiKeys,

@@ -11,7 +11,7 @@ import cliRouter from './routes/cli.js';
 import { createLogger } from './utils/logger.js';
 import { renderUploadScript } from './utils/cliScript.js';
 import { ensureAdminUser } from './utils/ensureAdmin.js';
-import { getConfiguredAccessUrl, inferAccessUrl } from './utils/accessUrl.js';
+import { getConfiguredAccessUrl, inferAccessUrl, normalizeRoutePrefix } from './utils/accessUrl.js';
 
 const log = createLogger('server');
 
@@ -32,12 +32,6 @@ const HOT_RELOAD_HTML = process.env.NODE_ENV !== 'production';
 function loadIndexHtml(): string {
   const raw = HOT_RELOAD_HTML ? readFileSync(indexHtmlPath, 'utf8') : indexHtmlCached;
   return raw.replaceAll('__ROUTE_PREFIX__', URI_PREFIX);
-}
-
-function normalizeRoutePrefix(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === '/') return '';
-  return `/${trimmed.replace(/^\/+|\/+$/g, '')}`;
 }
 
 app.use(express.json());

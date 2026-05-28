@@ -2,53 +2,14 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import * as db from '../db/store.js';
 import { requireAuth, requireDownloadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import { saveAgentFile, getAgentFileStream, copyAgentFiles, deleteAgentFiles, deleteAgentVersionFile } from '../utils/fileStore.js';
+import { saveAgentFile, getAgentFileStream, deleteAgentFiles, deleteAgentVersionFile } from '../utils/fileStore.js';
 import { inferAccessUrl, normalizeRoutePrefix } from '../utils/accessUrl.js';
+import { createZipUpload, validateAgentType, validateManagedTags } from './agentMetadata.js';
 import type { AgentConfig } from '../shared/types.js';
 import crypto from 'crypto';
-import multer from 'multer';
-import { existsSync } from 'fs';
 
 const router = Router();
-
-const maxUploadSize = Number(process.env.MAX_UPLOAD_MB || 100) * 1024 * 1024;
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: maxUploadSize },
-  fileFilter: (_req, file, cb) => {
-    if (!file.originalname.toLowerCase().endsWith('.zip') && file.mimetype !== 'application/zip') {
-      cb(new Error('Only ZIP files are allowed'));
-      return;
-    }
-    cb(null, true);
-  },
-});
-
-function parseTagInput(value: unknown): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (Array.isArray(value)) return value.map((t) => String(t).trim()).filter(Boolean);
-  return String(value).split(',').map((t) => t.trim()).filter(Boolean);
-}
-
-async function validateManagedTags(userId: string, value: unknown): Promise<string[] | undefined> {
-  const tags = parseTagInput(value);
-  if (tags === undefined) return undefined;
-
-  const allowed = new Set((await db.getManagedTags(userId)).map((tag) => tag.name));
-  const invalid = tags.filter((tag) => !allowed.has(tag));
-  if (invalid.length) {
-    throw new Error(`Unknown tags: ${invalid.join(', ')}`);
-  }
-
-  return [...new Set(tags)];
-}
-
-async function validateAgentType(userId: string, value: unknown): Promise<string> {
-  const type = String(value || 'currentdir').trim();
-  const allowed = new Set((await db.getManagedAgentTypes(userId)).map((item) => item.name));
-  if (!allowed.has(type)) throw new Error(`Unknown type: ${type}`);
-  return type;
-}
+const upload = createZipUpload();
 
 async function allowPublicOrDownloadAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const agent = await db.getAgent(req.params.id);

@@ -1,48 +1,13 @@
 import { Router, type Request, type Response } from 'express';
-import multer from 'multer';
 import crypto from 'crypto';
-import { requireAuth, requireUploadAuth } from '../middleware/adminAuth.js';
+import { requireUploadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import * as db from '../db/store.js';
 import { saveAgentFile } from '../utils/fileStore.js';
+import { createZipUpload, validateAgentType, validateManagedTags } from './agentMetadata.js';
 
 const router = Router();
-
-const maxUploadSize = Number(process.env.MAX_UPLOAD_MB || 100) * 1024 * 1024;
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: maxUploadSize },
-  fileFilter: (_req, file, cb) => {
-    if (!file.originalname.toLowerCase().endsWith('.zip') && file.mimetype !== 'application/zip') {
-      cb(new Error('Only ZIP files are allowed'));
-      return;
-    }
-    cb(null, true);
-  },
-});
-
-function parseTags(value: unknown): string[] | undefined {
-  if (value === undefined || value === null || value === '') return undefined;
-  if (Array.isArray(value)) return value.map((v) => String(v).trim()).filter(Boolean);
-  return String(value).split(',').map((t) => t.trim()).filter(Boolean);
-}
-
-async function validateManagedTags(userId: string, tags: string[] | undefined): Promise<string[] | undefined> {
-  if (tags === undefined) return undefined;
-  const allowed = new Set((await db.getManagedTags(userId)).map((tag) => tag.name));
-  const invalid = tags.filter((tag) => !allowed.has(tag));
-  if (invalid.length) {
-    throw new Error(`Unknown tags: ${invalid.join(', ')}`);
-  }
-  return [...new Set(tags)];
-}
-
-async function validateAgentType(userId: string, value: unknown): Promise<string> {
-  const type = String(value || 'currentdir').trim();
-  const allowed = new Set((await db.getManagedAgentTypes(userId)).map((item) => item.name));
-  if (!allowed.has(type)) throw new Error(`Unknown type: ${type}`);
-  return type;
-}
+const upload = createZipUpload();
 
 router.get('/ping', requireUploadAuth, (req: Request, res: Response) => {
   res.json({ ok: true, userId: (req as any).userId, authVia: (req as any).authVia || 'jwt' });
@@ -53,13 +18,13 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
   if (!req.file) return res.status(400).json({ error: 'agentFile (ZIP) is required' });
 
   const name = (req.body.name || '').toString().trim();
-  const agentId = (req.body.agentId || req.body.id || '').toString().trim();
+  const agentId = (req.body.agentId || '').toString().trim();
   const description = (req.body.description || '').toString();
   let type: string;
   let tags: string[] | undefined;
   try {
     type = await validateAgentType(userId, req.body.type);
-    tags = await validateManagedTags(userId, parseTags(req.body.tags));
+    tags = await validateManagedTags(userId, req.body.tags);
   } catch (err) {
     return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid agent metadata' });
   }

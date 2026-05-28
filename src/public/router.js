@@ -1,7 +1,6 @@
 import { routeHref, stripRoutePrefix } from './api.js';
 
 let routeMap = new Map();
-let lastPath = null;
 
 function navigate(path) {
   history.pushState(null, '', routeHref(path));
@@ -55,7 +54,6 @@ function handleRoute() {
   }
   else if (routeMap.has('/')) routeMap.get('/')?.();
 
-  lastPath = path;
 }
 
 document.addEventListener('click', e => {

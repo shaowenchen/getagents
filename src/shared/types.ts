@@ -42,20 +42,6 @@ export interface AgentSnapshot {
   avatar?: string;
 }
 
-export interface CreateAgentRequest {
-  name: string;
-  type?: string;
-  description: string;
-  tags?: string[];
-  avatar?: string;
-}
-
-export interface ShareConfig {
-  token: string;
-  password?: string;
-  url: string;
-}
-
 export interface User {
   id: string;
   username: string;

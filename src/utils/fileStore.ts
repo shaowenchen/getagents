@@ -22,7 +22,14 @@ const S3_LOCATION = parseS3Uri(process.env.AWS_BUCKET_URI || process.env.S3_URI 
 const S3_BUCKET = S3_LOCATION.bucket;
 const S3_KEY_PREFIX = S3_LOCATION.prefix;
 const S3_REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || process.env.S3_REGION || 'us-east-1';
-const S3_ENDPOINT = process.env.AWS_ENDPOINT_URL || process.env.S3_ENDPOINT_URL || process.env.S3_ENDPOINT || undefined;
+const S3_ENDPOINT = normalizeS3Endpoint(process.env.AWS_ENDPOINT_URL || process.env.S3_ENDPOINT_URL || process.env.S3_ENDPOINT);
+const S3_FORCE_PATH_STYLE = parseS3ForcePathStyle(
+  process.env.AWS_S3_FORCE_PATH_STYLE || process.env.S3_FORCE_PATH_STYLE,
+  S3_ENDPOINT
+);
+const S3_REQUEST_CHECKSUM_CALCULATION = parseS3RequestChecksumCalculation(
+  process.env.AWS_S3_REQUEST_CHECKSUM_CALCULATION || process.env.S3_REQUEST_CHECKSUM_CALCULATION
+);
 const S3_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || process.env.S3_ACCESS_KEY_ID;
 const S3_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || process.env.S3_SECRET_ACCESS_KEY;
 
@@ -33,7 +40,8 @@ function createS3Client(): S3Client {
   return new S3Client({
     region: S3_REGION,
     endpoint: S3_ENDPOINT,
-    forcePathStyle: true,
+    forcePathStyle: S3_FORCE_PATH_STYLE,
+    requestChecksumCalculation: S3_REQUEST_CHECKSUM_CALCULATION,
     credentials: S3_ACCESS_KEY_ID && S3_SECRET_ACCESS_KEY
       ? {
           accessKeyId: S3_ACCESS_KEY_ID,
@@ -47,6 +55,27 @@ const s3 = createS3Client();
 
 function normalizeS3Prefix(prefix: string): string {
   return String(prefix || '').replace(/^\/+|\/+$/g, '');
+}
+
+function normalizeS3Endpoint(value: string | undefined): string | undefined {
+  const trimmed = String(value || '').trim().replace(/\/+$/g, '');
+  if (!trimmed) return undefined;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function parseS3ForcePathStyle(value: string | undefined, endpoint: string | undefined): boolean {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  if (endpoint && /(?:^|\.)ks3[-.]|ksyuncs\.com/i.test(new URL(endpoint).hostname)) return false;
+  return true;
+}
+
+function parseS3RequestChecksumCalculation(value: string | undefined): 'WHEN_REQUIRED' | 'WHEN_SUPPORTED' {
+  const normalized = String(value || '').trim().toUpperCase().replace(/-/g, '_');
+  if (normalized === 'WHEN_SUPPORTED') return 'WHEN_SUPPORTED';
+  return 'WHEN_REQUIRED';
 }
 
 function parseS3Uri(value: string, fallbackBucket: string, fallbackPrefix: string): { bucket: string; prefix: string } {

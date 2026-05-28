@@ -8,6 +8,8 @@ import * as db from '../db/store.js';
 
 const uploadTempDir = join(tmpdir(), 'getagents-uploads');
 const maxUploadSize = Number(process.env.MAX_UPLOAD_MB || 500) * 1024 * 1024;
+const AGENT_NAME_PATTERN = /^[a-z0-9-]{4,20}$/;
+const AGENT_NAME_RULE_MESSAGE = 'name must be 4-20 characters and contain only lowercase letters, numbers, and hyphens';
 
 function parseTagInput(value: unknown): string[] | undefined {
   if (value === undefined || value === null || value === '') return undefined;
@@ -58,4 +60,21 @@ export async function validateAgentType(userId: string, value: unknown): Promise
   const allowed = new Set((await db.getManagedAgentTypes(userId)).map((item) => item.name));
   if (!allowed.has(type)) throw new Error(`Unknown type: ${type}`);
   return type;
+}
+
+export function normalizeAgentName(value: unknown): string {
+  const name = String(value || '').trim();
+  if (!name) throw new Error('name is required');
+  if (!AGENT_NAME_PATTERN.test(name)) throw new Error(AGENT_NAME_RULE_MESSAGE);
+  return name;
+}
+
+export async function validateAgentName(userId: string, value: unknown, currentAgentId?: string): Promise<string> {
+  const name = normalizeAgentName(value);
+
+  const agents = await db.getAllAgents(userId);
+  const duplicate = agents.find((agent) => agent.name === name && agent.id !== currentAgentId);
+  if (duplicate) throw new Error('name already exists for this user');
+
+  return name;
 }

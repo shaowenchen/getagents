@@ -3,6 +3,7 @@ import * as db from '../db/store.js';
 import { requireAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { copyAgentFiles } from '../utils/fileStore.js';
+import { validateAgentName } from './agentMetadata.js';
 
 const router = Router();
 
@@ -30,6 +31,11 @@ router.post('/:token/install', requireAuth, asyncHandler(async (req, res) => {
     if (provided !== agent.sharePassword) {
       return res.status(401).json({ error: 'Password required', passwordProtected: true });
     }
+  }
+  try {
+    await validateAgentName(userId, agent.name);
+  } catch (err) {
+    return res.status(409).json({ error: err instanceof Error ? err.message : 'Agent name conflict' });
   }
 
   // Increment download count

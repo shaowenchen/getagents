@@ -4,7 +4,7 @@ import { requireAuth, requireDownloadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { hashAgentFile, saveAgentFileFromPath, getAgentFileStream, deleteAgentFiles, deleteAgentVersionFile } from '../utils/fileStore.js';
 import { inferAccessUrl, normalizeRoutePrefix } from '../utils/accessUrl.js';
-import { cleanupUploadedFile, createZipUpload, validateAgentType, validateManagedTags } from './agentMetadata.js';
+import { cleanupUploadedFile, createZipUpload, validateAgentName, validateAgentType, validateManagedTags } from './agentMetadata.js';
 import type { AgentConfig } from '../shared/types.js';
 import crypto from 'crypto';
 
@@ -47,17 +47,16 @@ router.get('/:id', asyncHandler(async (req, res) => {
 router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (req, res) => {
   const userId = (req as any).userId;
   const { name, description, tags, avatar } = req.body;
-  if (!name) {
-    return res.status(400).json({ error: 'name is required' });
-  }
   if (!req.file) {
     return res.status(400).json({ error: 'agentFile (ZIP) is required' });
   }
 
   try {
+    let selectedName: string;
     let selectedTags: string[] | undefined;
     let selectedType: string;
     try {
+      selectedName = await validateAgentName(userId, name);
       selectedTags = await validateManagedTags(userId, tags);
       selectedType = await validateAgentType(userId, req.body.type);
     } catch (err) {
@@ -66,7 +65,7 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
 
     const fileHash = await hashAgentFile(req.file.path);
     const agent = await db.createAgent(userId, {
-      name,
+      name: selectedName,
       type: selectedType,
       description: description || '',
       filename: req.file.originalname,
@@ -92,7 +91,13 @@ router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (
 
   const patch: Partial<AgentConfig> = {};
   try {
-    if (req.body.name !== undefined) patch.name = req.body.name;
+    if (req.body.name !== undefined) {
+      try {
+        patch.name = await validateAgentName((req as any).userId, req.body.name, req.params.id);
+      } catch (err) {
+        return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid name' });
+      }
+    }
     if (req.body.type !== undefined) {
       try {
         patch.type = await validateAgentType((req as any).userId, req.body.type);

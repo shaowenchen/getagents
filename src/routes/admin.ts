@@ -22,6 +22,8 @@ import { generateUserKey, generateUserKeys, hashUserKeys, type UserKeyKind } fro
 const log = createLogger('admin-route');
 const router = Router();
 const DEFAULT_EXTRA_ADMIN_API_KEY = 'user-adminAPIKeyChangeMe0000000000000';
+const USERNAME_PATTERN = /^[a-z0-9]{8,20}$/;
+const USERNAME_RULE_MESSAGE = 'username must be 8-20 characters and contain only lowercase letters and numbers';
 
 function parseBackupDirs(value: unknown): string[] {
   if (Array.isArray(value)) return [...new Set(value.map((dir) => String(dir).trim()).filter(Boolean))];
@@ -213,20 +215,21 @@ router.post('/keys/:keyType/reset', requireAuth, asyncHandler(async (req, res) =
 
 router.post('/register', asyncHandler(async (req, res) => {
   const { username } = req.body || {};
-  if (!username || typeof username !== 'string' || username.trim().length < 2) {
+  const normalizedUsername = typeof username === 'string' ? username.trim() : '';
+  if (!USERNAME_PATTERN.test(normalizedUsername)) {
     log.warn('Register attempt with invalid username', { username });
-    return res.status(400).json({ error: 'username must be at least 2 characters' });
+    return res.status(400).json({ error: USERNAME_RULE_MESSAGE });
   }
 
-  const existing = await getUserByUsername(username.trim());
+  const existing = await getUserByUsername(normalizedUsername);
   if (existing) {
-    log.warn('Register attempt with taken username', { username: username.trim() });
+    log.warn('Register attempt with taken username', { username: normalizedUsername });
     return res.status(409).json({ error: 'Username already taken' });
   }
 
   const keys = generateUserKeys();
   const hashes = await hashUserKeys(keys);
-  const user = await createUser(username.trim(), hashes.loginKeyHash, {
+  const user = await createUser(normalizedUsername, hashes.loginKeyHash, {
     loginKey: keys.loginKey,
     uploadKey: keys.uploadKey,
     uploadKeyHash: hashes.uploadKeyHash,

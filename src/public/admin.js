@@ -7,6 +7,10 @@ import { state, createAgentForm, resetAgentForm } from './state.js';
 
 let loginMode = 'login'; // 'login' | 'register'
 let registeredKey = ''; // shown after successful registration
+const USERNAME_PATTERN = /^[a-z0-9]{8,20}$/;
+const USERNAME_RULE_MESSAGE = 'Username must be 8-20 characters and contain only lowercase letters and numbers.';
+const AGENT_NAME_PATTERN = /^[a-z0-9-]{4,20}$/;
+const AGENT_NAME_RULE_MESSAGE = 'Agent name must be 4-20 characters and contain only lowercase letters, numbers, and hyphens.';
 
 function renderAdminLogin(message = '') {
   const isRegister = loginMode === 'register';
@@ -23,8 +27,10 @@ function renderAdminLogin(message = '') {
       </div>
       ` : ''}
       ${isRegister ? `
-      <input type="text" id="adminUsername" placeholder="Username (display name)"
+      <input type="text" id="adminUsername" placeholder="8-20 lowercase letters or numbers"
+        minlength="8" maxlength="20" pattern="[a-z0-9]{8,20}" autocomplete="username"
         onkeydown="if(event.key==='Enter')submitAdminRegister()">
+      <p class="text-muted" style="margin:-0.35rem 0 0.75rem;font-size:0.78rem">8-20 characters, lowercase letters and numbers only.</p>
       <button class="btn-primary" style="width:100%;margin-bottom:0.5rem" onclick="submitAdminRegister()">Create Account</button>
       <button class="btn-ghost" style="width:100%" onclick="switchLoginMode('login')">Back to sign in</button>
       ` : `
@@ -56,6 +62,7 @@ window.submitAdminLogin = async () => {
     state.currentUser = { userId, username: name };
     updateUserNavInfo();
     loginMode = 'login';
+    registeredKey = '';
     await renderCurrentAuthenticatedPage();
   } catch (e) {
     renderAdminLogin(e.message || 'Invalid API key');
@@ -63,9 +70,9 @@ window.submitAdminLogin = async () => {
 };
 
 window.submitAdminRegister = async () => {
-  const username = document.getElementById('adminUsername')?.value || '';
-  if (!username) {
-    renderAdminLogin('Username is required.');
+  const username = (document.getElementById('adminUsername')?.value || '').trim();
+  if (!USERNAME_PATTERN.test(username)) {
+    renderAdminLogin(USERNAME_RULE_MESSAGE);
     return;
   }
   try {
@@ -74,8 +81,8 @@ window.submitAdminRegister = async () => {
     state.currentUser = { userId, username: name };
     updateUserNavInfo();
     loginMode = 'login';
-    registeredKey = apiKey;
-    renderAdminLogin();
+    registeredKey = '';
+    navigate('/agents');
   } catch (e) {
     registeredKey = '';
     renderAdminLogin(e.message || 'Registration failed');
@@ -90,6 +97,24 @@ window.adminLogout = () => {
   loginMode = 'login';
   renderAdminLogin();
 };
+
+function resetTransientUiState() {
+  loginMode = 'login';
+  registeredKey = '';
+  state.resetApiKeyResult = null;
+  state.showAgentForm = false;
+  state.editingAgent = null;
+  state.agentForm = createAgentForm();
+  state.agentFormFile = null;
+  state.detailDiff = null;
+  state.detailExpandedRestoreVersion = null;
+  state.marketplaceExpandedAgentId = null;
+  document.getElementById('nav-user-info')?.classList.remove('open');
+}
+
+window.addEventListener('app:navigate', () => {
+  resetTransientUiState();
+});
 
 function isAdminRoute() {
   return window.location.pathname.replace(/\/+$/g, '').endsWith('/admin');
@@ -878,7 +903,8 @@ function renderAgentForm() {
       <div class="form-group">
         <label class="field">
           <span class="field-label">Name<span class="field-required">*</span></span>
-          <input data-agent-field="name" placeholder="e.g. My Assistant" value="${escapeHtml(f.name)}" oninput="updateAgentFormField('name', this.value)">
+          <input data-agent-field="name" placeholder="e.g. my-agent" value="${escapeHtml(f.name)}" minlength="4" maxlength="20" pattern="[a-z0-9-]{4,20}" oninput="updateAgentFormField('name', this.value)">
+          <span class="text-muted" style="font-size:0.75rem">4-20 characters, lowercase letters, numbers, and hyphens only. Names must be unique in your account.</span>
         </label>
         <label class="field">
           <span class="field-label">Type<span class="field-required">*</span></span>
@@ -1012,6 +1038,9 @@ window.saveAgent = async () => {
 
   if (!state.agentForm.name) {
     return alert('Name is required');
+  }
+  if (!AGENT_NAME_PATTERN.test(state.agentForm.name)) {
+    return alert(AGENT_NAME_RULE_MESSAGE);
   }
 
   if (state.agentFormFile) {

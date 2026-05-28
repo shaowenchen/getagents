@@ -1,6 +1,7 @@
 import { routeHref, stripRoutePrefix } from './api.js';
 
 let routeMap = new Map();
+let currentPath = null;
 
 function navigate(path) {
   history.pushState(null, '', routeHref(path));
@@ -17,6 +18,10 @@ function registerRoute(pattern, handler) {
 
 function handleRoute() {
   const path = stripRoutePrefix(window.location.pathname);
+  if (currentPath !== path) {
+    window.dispatchEvent(new CustomEvent('app:navigate', { detail: { from: currentPath, to: path } }));
+    currentPath = path;
+  }
 
   document.querySelectorAll('nav a').forEach(a => {
     const nav = a.dataset.nav;

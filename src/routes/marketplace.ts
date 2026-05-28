@@ -3,6 +3,7 @@ import * as db from '../db/store.js';
 import { requireAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import { copyAgentFiles } from '../utils/fileStore.js';
+import { validateAgentName } from './agentMetadata.js';
 import type { AgentConfig } from '../shared/types.js';
 
 const router = Router();
@@ -63,6 +64,11 @@ router.post('/:id/install', requireAuth, asyncHandler(async (req, res) => {
   const published = source ? await db.getPublishedVersion(req.params.id) : undefined;
   if (!source || !published) {
     return res.status(404).json({ error: 'Agent not found or not released' });
+  }
+  try {
+    await validateAgentName(userId, source.name);
+  } catch (err) {
+    return res.status(409).json({ error: err instanceof Error ? err.message : 'Agent name conflict' });
   }
 
   // Increment download count on source

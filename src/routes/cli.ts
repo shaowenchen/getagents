@@ -3,7 +3,7 @@ import { requireUploadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 import * as db from '../db/store.js';
 import { hashAgentFile, saveAgentFileFromPath } from '../utils/fileStore.js';
-import { cleanupUploadedFile, createZipUpload, validateAgentType, validateManagedTags } from './agentMetadata.js';
+import { cleanupUploadedFile, createZipUpload, normalizeAgentName, validateAgentName, validateAgentType, validateManagedTags } from './agentMetadata.js';
 
 const router = Router();
 const upload = createZipUpload();
@@ -17,12 +17,14 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
   if (!req.file) return res.status(400).json({ error: 'agentFile (ZIP) is required' });
 
   try {
-    const name = (req.body.name || '').toString().trim();
+    const rawName = (req.body.name || '').toString().trim();
     const agentId = (req.body.agentId || '').toString().trim();
     const description = (req.body.description || '').toString();
+    let name = rawName;
     let type: string;
     let tags: string[] | undefined;
     try {
+      if (rawName) name = agentId ? await validateAgentName(userId, rawName, agentId) : normalizeAgentName(rawName);
       type = await validateAgentType(userId, req.body.type);
       tags = await validateManagedTags(userId, req.body.tags);
     } catch (err) {
@@ -47,6 +49,7 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
     }
 
     if (!target) {
+      name = await validateAgentName(userId, name);
       const agent = await db.createAgent(userId, {
         name,
         type,

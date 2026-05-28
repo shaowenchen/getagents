@@ -1,6 +1,6 @@
 import {
   CopyObjectCommand,
-  DeleteObjectsCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
@@ -281,13 +281,16 @@ async function copyS3Object(sourceKey: string, targetKey: string): Promise<void>
 }
 
 async function deleteS3Object(key: string): Promise<void> {
-  await s3.send(new DeleteObjectsCommand({
+  await s3.send(new DeleteObjectCommand({
     Bucket: S3_BUCKET,
-    Delete: {
-      Objects: [{ Key: key }],
-      Quiet: true,
-    },
+    Key: key,
   }));
+}
+
+async function deleteS3Objects(keys: string[]): Promise<void> {
+  for (const key of keys) {
+    await deleteS3Object(key);
+  }
 }
 
 async function saveS3AgentFile(agentId: string, version: number, buffer: Buffer): Promise<string> {
@@ -507,27 +510,15 @@ async function deleteS3AgentFiles(agentId: string): Promise<void> {
   const keys = await listS3AgentKeys(agentId);
   if (!keys.length) return;
 
-  await s3.send(new DeleteObjectsCommand({
-    Bucket: S3_BUCKET,
-    Delete: {
-      Objects: keys.map((Key) => ({ Key })),
-      Quiet: true,
-    },
-  }));
+  await deleteS3Objects(keys);
 }
 
 async function deleteS3AgentVersionFile(agentId: string, version: number): Promise<void> {
   const fileName = versionFileName(version);
-  await s3.send(new DeleteObjectsCommand({
-    Bucket: S3_BUCKET,
-    Delete: {
-      Objects: [
-        { Key: s3UploadKey(agentId, fileName) },
-        { Key: s3Key(agentId, fileName) },
-      ],
-      Quiet: true,
-    },
-  }));
+  await deleteS3Objects([
+    s3UploadKey(agentId, fileName),
+    s3Key(agentId, fileName),
+  ]);
 }
 
 async function deleteAgentFiles(agentId: string): Promise<void> {

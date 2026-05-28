@@ -123,6 +123,7 @@ function migrateSchema(): void {
           upload_key_hash = COALESCE(upload_key_hash, password_hash),
           download_key_hash = COALESCE(download_key_hash, password_hash)
     `).run();
+    db.prepare('ALTER TABLE users DROP COLUMN password_hash').run();
   }
 
   const versionColumns = sqliteColumns('agent_versions');

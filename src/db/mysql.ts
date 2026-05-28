@@ -146,6 +146,7 @@ async function migrateSchema(db: Pool): Promise<void> {
           upload_key_hash = COALESCE(upload_key_hash, password_hash),
           download_key_hash = COALESCE(download_key_hash, password_hash)
     `);
+    await db.query('ALTER TABLE users DROP COLUMN password_hash');
   }
 
   if (await mysqlColumnExists(db, 'agents', 'is_public') && await mysqlColumnExists(db, 'agent_versions', 'is_published')) {

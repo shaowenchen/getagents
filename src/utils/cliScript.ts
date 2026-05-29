@@ -155,30 +155,12 @@ info "Packaging \${#EXPANDED_SOURCE_DIRS[@]} \$source_label for type '\$AGENT_TY
 
 if command -v zip >/dev/null 2>&1; then
   if [[ \${#EXPANDED_SOURCE_DIRS[@]} -eq 1 ]]; then
-    (cd "\${EXPANDED_SOURCE_DIRS[0]}" && zip -qr "\$ZIP_PATH" . \\
-      -x '*/.git/*' '.git/*' \\
-      -x '*/node_modules/*' 'node_modules/*' \\
-      -x '*/__pycache__/*' '__pycache__/*' \\
-      -x '*/.venv/*' '.venv/*' '*/venv/*' 'venv/*' \\
-      -x '*/dist/*' 'dist/*' \\
-      -x '*/build/*' 'build/*' \\
-      -x '*/.cache/*' '.cache/*' \\
-      -x '.DS_Store' '*/.DS_Store' \\
-      -x '*.log')
+    (cd "\${EXPANDED_SOURCE_DIRS[0]}" && zip -qr "\$ZIP_PATH" .)
   else
     for source in "\${EXPANDED_SOURCE_DIRS[@]}"; do
       parent="\$(dirname "\$source")"
       base="\$(basename "\$source")"
-      (cd "\$parent" && zip -qr "\$ZIP_PATH" "\$base" \\
-        -x '*/.git/*' '.git/*' \\
-        -x '*/node_modules/*' 'node_modules/*' \\
-        -x '*/__pycache__/*' '__pycache__/*' \\
-        -x '*/.venv/*' '.venv/*' '*/venv/*' 'venv/*' \\
-        -x '*/dist/*' 'dist/*' \\
-        -x '*/build/*' 'build/*' \\
-        -x '*/.cache/*' '.cache/*' \\
-        -x '.DS_Store' '*/.DS_Store' \\
-        -x '*.log')
+      (cd "\$parent" && zip -qr "\$ZIP_PATH" "\$base")
     done
   fi
 elif command -v python3 >/dev/null 2>&1; then
@@ -186,7 +168,6 @@ elif command -v python3 >/dev/null 2>&1; then
 import os, stat, sys, zipfile
 
 dst, sources = sys.argv[1], sys.argv[2:]
-skip = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', '.cache'}
 def regular_dir(path):
     try:
         return stat.S_ISDIR(os.lstat(path).st_mode)
@@ -199,11 +180,9 @@ with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(src):
             dirs[:] = [
                 d for d in dirs
-                if d not in skip and regular_dir(os.path.join(root, d))
+                if regular_dir(os.path.join(root, d))
             ]
             for f in files:
-                if f == '.DS_Store' or f.endswith('.log'):
-                    continue
                 full = os.path.join(root, f)
                 try:
                     mode = os.lstat(full).st_mode

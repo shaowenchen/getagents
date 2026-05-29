@@ -504,7 +504,7 @@ function renderAgentsTable(agents, isSystemAdmin = false) {
 
   return `
     <div class="admin-table-wrap">
-      <table class="admin-table">
+      <table class="admin-table ${isSystemAdmin ? 'admin-table-system' : ''}">
         <colgroup>
           <col class="admin-col-name">
           ${isSystemAdmin ? '<col class="admin-col-user">' : ''}
@@ -539,7 +539,7 @@ function renderAgentsTable(agents, isSystemAdmin = false) {
                   </div>
                 </div>
               </td>
-              ${isSystemAdmin ? `<td><span class="text-muted">${escapeHtml(agent.ownerUsername || agent.userId || '')}</span></td>` : ''}
+              ${isSystemAdmin ? `<td><span class="admin-user-cell" title="${escapeHtml(agent.ownerUsername || agent.userId || '')}">${escapeHtml(agent.ownerUsername || agent.userId || '')}</span></td>` : ''}
               <td><span class="admin-type-badge">${escapeHtml(agentTypeLabel(agent.type))}</span></td>
               <td>
                 <div class="admin-status-stack">
@@ -548,8 +548,8 @@ function renderAgentsTable(agents, isSystemAdmin = false) {
               </td>
               <td>
                 <div class="admin-file-cell">
-                  <span title="${escapeHtml(agent.filename || '')}">${escapeHtml(truncate(agent.filename || '', 24))}</span>
-                  <div class="text-small">${formatFileSize(agent.fileSize || 0)}</div>
+                  <strong>${formatFileSize(agent.fileSize || 0)}</strong>
+                  <div class="text-small">ZIP package</div>
                 </div>
               </td>
               <td><span class="admin-count">${agent.downloadCount || 0}</span></td>

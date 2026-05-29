@@ -103,33 +103,43 @@ button { cursor: pointer; }
 .admin-tab span { margin-left: 0.35rem; padding: 0.06rem 0.35rem; border-radius: 999px; background: #f1f5f9; color: inherit; font-size: 0.72rem; }
 .admin-table-card { padding: 1rem; }
 .admin-table-card:hover { transform: none; }
-.admin-table-wrap { overflow: visible; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
+.admin-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
 .admin-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 0.86rem; }
 .admin-col-name { width: 25%; }
+.admin-col-user { width: 12%; }
 .admin-col-type { width: 14%; }
 .admin-col-status { width: 14%; }
 .admin-col-file { width: 13%; }
 .admin-col-downloads { width: 10%; }
 .admin-col-updated { width: 14%; }
 .admin-col-actions { width: 10%; }
-.admin-table th, .admin-table td { padding: 0.78rem 0.7rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; overflow-wrap: anywhere; }
+.admin-table.admin-table-system { min-width: 980px; }
+.admin-table.admin-table-system .admin-col-name { width: 24%; }
+.admin-table.admin-table-system .admin-col-type { width: 10%; }
+.admin-table.admin-table-system .admin-col-status { width: 8%; }
+.admin-table.admin-table-system .admin-col-file { width: 11%; }
+.admin-table.admin-table-system .admin-col-downloads { width: 8%; }
+.admin-table.admin-table-system .admin-col-updated { width: 13%; }
+.admin-table.admin-table-system .admin-col-actions { width: 14%; }
+.admin-table th, .admin-table td { padding: 0.78rem 0.7rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
 .admin-table th { color: #64748b; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; background: linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%); white-space: nowrap; }
 .admin-table tr:last-child td { border-bottom: none; }
 .admin-agent-row { transition: background 120ms ease; }
 .admin-agent-row:hover { background: #f8fbff; }
 .admin-agent-name-cell { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
 .admin-agent-avatar { width: 34px; height: 34px; border-radius: 11px; font-size: 0.82rem; box-shadow: 0 6px 16px rgba(37,99,235,0.14); }
-.admin-agent-name { display: block; line-height: 1.15; letter-spacing: -0.01em; }
-.admin-agent-desc { max-width: 230px; line-height: 1.25; margin-top: 0.12rem; }
+.admin-agent-name { display: block; line-height: 1.15; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-agent-desc { max-width: 230px; line-height: 1.25; margin-top: 0.12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-user-cell { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #475569; }
 .admin-type-badge { display: inline-flex; align-items: center; max-width: 120px; padding: 0.18rem 0.52rem; border-radius: 999px; background: #eef2ff; color: #4338ca; font-size: 0.74rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .admin-status-stack { display: flex; gap: 0.3rem; flex-wrap: wrap; min-width: 92px; }
 .admin-status-badge { display: inline-flex; align-items: center; padding: 0.14rem 0.45rem; border-radius: 999px; font-size: 0.7rem; font-weight: 800; line-height: 1; }
 .status-public { background: #ede9fe; color: #6d28d9; }
-.admin-file-cell { min-width: 86px; line-height: 1.25; }
+.admin-file-cell { min-width: 86px; line-height: 1.25; white-space: nowrap; }
 .admin-count { display: inline-flex; min-width: 1.7rem; justify-content: center; padding: 0.18rem 0.45rem; border-radius: 999px; background: #f1f5f9; color: #475569; font-weight: 700; }
 .admin-updated-cell { color: #475569; white-space: normal; }
 .admin-table .admin-agent-actions { gap: 0.35rem; justify-content: flex-end; }
-.admin-table .admin-agent-actions .btn-ghost { white-space: nowrap; }
+.admin-table .admin-agent-actions .btn-ghost { white-space: nowrap; padding: 0.34rem 0.58rem; font-size: 0.78rem; }
 .agent-empty { padding: 3rem 1rem; border: 1px dashed var(--border-strong); border-radius: 16px; background: rgba(255, 255, 255, 0.55); }
 .badge-success { background: #16a34a; }
 .admin-login { max-width: 360px; margin: 3rem auto; padding: 1.5rem; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }

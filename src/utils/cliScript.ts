@@ -213,6 +213,7 @@ else
   FILE_HASH=""
 fi
 info "Archive: \$ZIP_PATH (\${SIZE_BYTES} bytes)"
+DIRECT_UPLOAD_FATAL=0
 
 json_payload() {
   python3 - "\$@" <<'PYEOF'
@@ -258,10 +259,18 @@ try_direct_upload() {
   local init_url="\${ENDPOINT%/}/api/cli/upload/direct/init"
   local complete_url="\${ENDPOINT%/}/api/cli/upload/direct/complete"
   local filename="\$(basename "\$ZIP_PATH")"
-  local payload response direct upload_url direct_key complete_payload
+  local payload response response_body http_status direct upload_url direct_key complete_payload
 
   payload="\$(json_payload "\$AGENT_ID" "\$AGENT_NAME" "\$AGENT_TYPE" "\$DESCRIPTION" "\$TAGS" "\$COMMENT" "\$filename" "\$SIZE_BYTES" "\$FILE_HASH" "")"
-  response="\$(curl -fsSL -X POST -H "X-API-Key: \$API_KEY" -H "Content-Type: application/json" --data "\$payload" "\$init_url" 2>/dev/null)" || return 1
+  response="\$(curl -sS -X POST -H "X-API-Key: \$API_KEY" -H "Content-Type: application/json" --data "\$payload" -w "\\n%{http_code}" "\$init_url")" || return 1
+  http_status="\${response##*\$'\\n'}"
+  response_body="\${response%\$'\\n'*}"
+  if [[ "\$http_status" != 2* ]]; then
+    err "Direct upload init failed (HTTP \$http_status): \$response_body"
+    [[ "\$http_status" == 4* ]] && DIRECT_UPLOAD_FATAL=1
+    return 1
+  fi
+  response="\$response_body"
   direct="\$(json_field "\$response" direct)"
   [[ "\$direct" == "True" || "\$direct" == "true" ]] || return 1
   upload_url="\$(json_field "\$response" url)"
@@ -276,10 +285,15 @@ try_direct_upload() {
 
   info "Finalizing direct upload ..."
   complete_payload="\$(json_payload "\$AGENT_ID" "\$AGENT_NAME" "\$AGENT_TYPE" "\$DESCRIPTION" "\$TAGS" "\$COMMENT" "\$filename" "\$SIZE_BYTES" "\$FILE_HASH" "\$direct_key")"
-  if ! RESPONSE="\$(curl -fsSL -X POST -H "X-API-Key: \$API_KEY" -H "Content-Type: application/json" --data "\$complete_payload" "\$complete_url" 2>&1)"; then
-    err "Direct upload finalize failed: \$RESPONSE"
+  response="\$(curl -sS -X POST -H "X-API-Key: \$API_KEY" -H "Content-Type: application/json" --data "\$complete_payload" -w "\\n%{http_code}" "\$complete_url")" || return 1
+  http_status="\${response##*\$'\\n'}"
+  response_body="\${response%\$'\\n'*}"
+  if [[ "\$http_status" != 2* ]]; then
+    err "Direct upload finalize failed (HTTP \$http_status): \$response_body"
+    [[ "\$http_status" == 4* ]] && DIRECT_UPLOAD_FATAL=1
     return 1
   fi
+  RESPONSE="\$response_body"
   echo "\$RESPONSE"
   info "Done."
   return 0
@@ -288,10 +302,13 @@ try_direct_upload() {
 if try_direct_upload; then
   exit 0
 fi
+if [[ "\$DIRECT_UPLOAD_FATAL" == "1" ]]; then
+  exit 22
+fi
 info "Direct upload unavailable or failed; falling back to GetAgents relay upload ..."
 
 # Build curl form arguments
-CURL_ARGS=(-fsSL -X POST
+CURL_ARGS=(-sSL -X POST
   -H "X-API-Key: \$API_KEY"
   -F "agentFile=@\$ZIP_PATH;type=application/zip")
 
@@ -305,12 +322,19 @@ CURL_ARGS=(-fsSL -X POST
 UPLOAD_URL="\${ENDPOINT%/}/api/cli/upload"
 info "Uploading to \$UPLOAD_URL ..."
 
-if RESPONSE=\$(curl "\${CURL_ARGS[@]}" "\$UPLOAD_URL"); then
-  echo "\$RESPONSE"
-  info "Done."
+if RESPONSE="\$(curl "\${CURL_ARGS[@]}" -w "\\n%{http_code}" "\$UPLOAD_URL")"; then
+  HTTP_STATUS="\${RESPONSE##*\$'\\n'}"
+  RESPONSE_BODY="\${RESPONSE%\$'\\n'*}"
+  if [[ "\$HTTP_STATUS" == 2* ]]; then
+    echo "\$RESPONSE_BODY"
+    info "Done."
+  else
+    err "Upload failed (HTTP \$HTTP_STATUS): \$RESPONSE_BODY"
+    exit 22
+  fi
 else
   CODE=\$?
-  err "Upload failed (curl exit \$CODE)"
+  err "Upload request failed (curl exit \$CODE)"
   exit \$CODE
 fi
 `;

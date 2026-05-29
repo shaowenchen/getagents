@@ -106,7 +106,7 @@ function renderVersionRows(agent, versions) {
 }
 
 function renderAgentCliPanel(agent) {
-  const apiKey = getUploadApiKey() || getAdminApiKey();
+  const apiKey = getUploadApiKey();
   const base = buildCliBaseUrl();
   const cmd = buildCliCommand({ agentId: agent.id, type: agent.type });
   return `
@@ -123,7 +123,7 @@ function renderAgentCliPanel(agent) {
 
       ${apiKey ? '' : `
         <div style="margin-top:0.75rem;padding:0.55rem 0.7rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;color:#9a3412;font-size:0.82rem">
-          Replace <code>&lt;your-api-key&gt;</code> with your API key. Sign in again to inject it automatically.
+          Replace <code>&lt;your-upload-key&gt;</code> with your Upload API Key. Sign in again to inject it automatically.
         </div>
       `}
 
@@ -155,7 +155,7 @@ function formatTime(timestamp) {
 }
 
 function versionDownloadUrl(agentId, version) {
-  const downloadKey = getDownloadApiKey() || getAdminApiKey();
+  const downloadKey = getDownloadApiKey();
   const keyPart = downloadKey ? `?downloadKey=${encodeURIComponent(downloadKey)}` : '';
   return publicUrl(`/api/agents/${agentId}/download/${version}${keyPart}`);
 }

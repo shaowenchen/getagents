@@ -97,7 +97,8 @@ router.post('/upload/direct/complete', requireUploadAuth, asyncHandler(async (re
       isPublic: false,
     });
     try {
-      await commitDirectAgentUpload(userId, directKey, agent.id, 1);
+      const filePath = await commitDirectAgentUpload(userId, directKey, agent.id, 1);
+      await db.updateAgent(agent.id, { filePath });
       await db.createVersion(agent.id, req.body.comment ? String(req.body.comment) : 'Initial CLI upload');
     } catch (err) {
       await db.deleteAgent(agent.id);
@@ -116,9 +117,9 @@ router.post('/upload/direct/complete', requireUploadAuth, asyncHandler(async (re
 
   const versions = await db.getVersions(target.id);
   const nextVersion = (versions[0]?.version ?? 0) + 1;
-  await commitDirectAgentUpload(userId, directKey, target.id, nextVersion);
+  const filePath = await commitDirectAgentUpload(userId, directKey, target.id, nextVersion);
 
-  const patch: Record<string, unknown> = { filename, fileSize, fileHash };
+  const patch: Record<string, unknown> = { filename, filePath, fileSize, fileHash };
   if (description) patch.description = description;
   if (req.body.type !== undefined) patch.type = type;
   if (tags !== undefined) patch.tags = tags;
@@ -182,7 +183,8 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
         tags,
         isPublic: false,
       });
-      await saveAgentFileFromPath(agent.id, 1, req.file.path);
+      const filePath = await saveAgentFileFromPath(agent.id, 1, req.file.path);
+      await db.updateAgent(agent.id, { filePath });
       await db.createVersion(agent.id, versionComment || 'Initial CLI upload');
 
       return res.status(201).json({
@@ -197,10 +199,11 @@ router.post('/upload', requireUploadAuth, upload.single('agentFile'), asyncHandl
 
     const versions = await db.getVersions(target.id);
     const nextVersion = (versions[0]?.version ?? 0) + 1;
-    await saveAgentFileFromPath(target.id, nextVersion, req.file.path);
+    const filePath = await saveAgentFileFromPath(target.id, nextVersion, req.file.path);
 
     const patch: Record<string, unknown> = {
       filename,
+      filePath,
       fileSize,
       fileHash,
     };

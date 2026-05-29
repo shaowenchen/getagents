@@ -8,7 +8,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { homedir, tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { mkdirSync, existsSync, copyFileSync, rmSync, createReadStream, createWriteStream } from 'fs';
 import { readdir, stat, unlink } from 'fs/promises';
 import { Readable } from 'stream';
@@ -170,6 +170,13 @@ async function ensureAgfsAgentDir(agentId: string): Promise<void> {
   await ensureAgfsDir(agfsPath('downloads', agentId));
 }
 
+async function ensureAgfsStoredFileDir(filePath: string): Promise<void> {
+  const parts = normalizeStoredFilePath(filePath).split('/').filter(Boolean);
+  parts.pop();
+  await ensureAgfsDir(AGFS_ROOT_PATH);
+  if (parts.length) await ensureAgfsDir(agfsPath(...parts));
+}
+
 function ensureAgentDir(): void {
   mkdirSync(AGENTS_ROOT, { recursive: true });
 }
@@ -186,6 +193,22 @@ function getLegacyAgentDir(agentId: string): string {
 
 function versionFileName(version: number): string {
   return `v${version}.zip`;
+}
+
+function agentFilePath(agentId: string, version: number): string {
+  return `/${agentId}/file-${version}.zip`;
+}
+
+function normalizeStoredFilePath(filePath: string): string {
+  return `/${String(filePath || '').replace(/^\/+|\/+$/g, '')}`;
+}
+
+function localStoredFilePath(filePath: string): string {
+  return join(AGENTS_ROOT, normalizeStoredFilePath(filePath).replace(/^\/+/, ''));
+}
+
+function s3StoredFileKey(filePath: string): string {
+  return s3Key(normalizeStoredFilePath(filePath));
 }
 
 function getVersionPath(agentId: string, version: number): string {
@@ -205,32 +228,32 @@ async function hashAgentFile(path: string): Promise<string> {
 }
 
 async function copyFileStream(sourcePath: string, destinationPath: string): Promise<void> {
+  mkdirSync(dirname(destinationPath), { recursive: true });
   await pipeline(createReadStream(sourcePath), createWriteStream(destinationPath));
 }
 
 async function saveLocalAgentFile(agentId: string, version: number, buffer: Buffer): Promise<string> {
   ensureAgentDir();
   const { writeFileSync } = await import('fs');
-  const versionPath = getVersionPath(agentId, version);
-  writeFileSync(versionPath, buffer);
-  // Keep the latest download artifact under a separate key/prefix.
-  const currentPath = getCurrentPath(agentId);
-  writeFileSync(currentPath, buffer);
-  return crypto.createHash('sha256').update(buffer).digest('hex');
+  const filePath = agentFilePath(agentId, version);
+  const destinationPath = localStoredFilePath(filePath);
+  mkdirSync(dirname(destinationPath), { recursive: true });
+  writeFileSync(destinationPath, buffer);
+  return filePath;
 }
 
 async function saveLocalAgentFileFromPath(agentId: string, version: number, sourcePath: string): Promise<string> {
   ensureAgentDir();
-  await copyFileStream(sourcePath, getVersionPath(agentId, version));
-  await copyFileStream(sourcePath, getCurrentPath(agentId));
-  return hashAgentFile(sourcePath);
+  const filePath = agentFilePath(agentId, version);
+  await copyFileStream(sourcePath, localStoredFilePath(filePath));
+  return filePath;
 }
 
 async function saveAgfsAgentFile(agentId: string, version: number, buffer: Buffer): Promise<string> {
-  await ensureAgfsAgentDir(agentId);
-  await agfsFetch('files', agfsPath('uploads', agentId, versionFileName(version)), { method: 'PUT', body: buffer });
-  await agfsFetch('files', agfsPath('downloads', agentId, 'current.zip'), { method: 'PUT', body: buffer });
-  return crypto.createHash('sha256').update(buffer).digest('hex');
+  const filePath = agentFilePath(agentId, version);
+  await ensureAgfsStoredFileDir(filePath);
+  await agfsFetch('files', agfsPath(filePath), { method: 'PUT', body: buffer });
+  return filePath;
 }
 
 async function putAgfsFile(path: string, sourcePath: string): Promise<void> {
@@ -244,10 +267,10 @@ async function putAgfsFile(path: string, sourcePath: string): Promise<void> {
 }
 
 async function saveAgfsAgentFileFromPath(agentId: string, version: number, sourcePath: string): Promise<string> {
-  await ensureAgfsAgentDir(agentId);
-  await putAgfsFile(agfsPath('uploads', agentId, versionFileName(version)), sourcePath);
-  await putAgfsFile(agfsPath('downloads', agentId, 'current.zip'), sourcePath);
-  return hashAgentFile(sourcePath);
+  const filePath = agentFilePath(agentId, version);
+  await ensureAgfsStoredFileDir(filePath);
+  await putAgfsFile(agfsPath(filePath), sourcePath);
+  return filePath;
 }
 
 async function putS3Object(key: string, buffer: Buffer): Promise<void> {
@@ -294,15 +317,15 @@ async function deleteS3Objects(keys: string[]): Promise<void> {
 }
 
 async function saveS3AgentFile(agentId: string, version: number, buffer: Buffer): Promise<string> {
-  await putS3Object(s3UploadKey(agentId, versionFileName(version)), buffer);
-  await putS3Object(s3DownloadKey(agentId, 'current.zip'), buffer);
-  return crypto.createHash('sha256').update(buffer).digest('hex');
+  const filePath = agentFilePath(agentId, version);
+  await putS3Object(s3StoredFileKey(filePath), buffer);
+  return filePath;
 }
 
 async function saveS3AgentFileFromPath(agentId: string, version: number, sourcePath: string): Promise<string> {
-  await putS3ObjectFromPath(s3UploadKey(agentId, versionFileName(version)), sourcePath);
-  await putS3ObjectFromPath(s3DownloadKey(agentId, 'current.zip'), sourcePath);
-  return hashAgentFile(sourcePath);
+  const filePath = agentFilePath(agentId, version);
+  await putS3ObjectFromPath(s3StoredFileKey(filePath), sourcePath);
+  return filePath;
 }
 
 async function saveAgentFile(agentId: string, version: number, buffer: Buffer): Promise<string> {
@@ -357,15 +380,15 @@ async function downloadS3ObjectToPath(key: string, destPath: string): Promise<vo
   await pipeline(body, createWriteStream(destPath));
 }
 
-async function commitDirectAgentUpload(userId: string, sourceKey: string, agentId: string, version: number): Promise<void> {
+async function commitDirectAgentUpload(userId: string, sourceKey: string, agentId: string, version: number): Promise<string> {
   if (!supportsDirectAgentUpload()) throw new Error('Direct upload is only supported for S3 storage');
   assertDirectUploadKey(userId, sourceKey);
 
+  const filePath = agentFilePath(agentId, version);
   const tmpPath = join(tmpdir(), `getagents-direct-${crypto.randomUUID()}.zip`);
   try {
     try {
-      await copyS3Object(sourceKey, s3UploadKey(agentId, versionFileName(version)));
-      await copyS3Object(sourceKey, s3DownloadKey(agentId, 'current.zip'));
+      await copyS3Object(sourceKey, s3StoredFileKey(filePath));
     } catch {
       await downloadS3ObjectToPath(sourceKey, tmpPath);
       await saveS3AgentFileFromPath(agentId, version, tmpPath);
@@ -374,6 +397,7 @@ async function commitDirectAgentUpload(userId: string, sourceKey: string, agentI
   } finally {
     await unlink(tmpPath).catch(() => undefined);
   }
+  return filePath;
 }
 
 function getAgentFilePath(agentId: string, version?: number): string {
@@ -412,8 +436,8 @@ async function copyLocalAgentFiles(fromAgentId: string, toAgentId: string): Prom
   }
 }
 
-async function listAgfsAgentFiles(scope: 'uploads' | 'downloads' | 'agents', agentId: string): Promise<string[]> {
-  const dir = agfsPath(scope, agentId);
+async function listAgfsAgentFiles(scope: 'uploads' | 'downloads' | 'agents' | '', agentId: string): Promise<string[]> {
+  const dir = scope ? agfsPath(scope, agentId) : agfsPath(agentId);
   const res = await fetch(agfsUrl('directories', dir));
   if (res.status === 404) return [];
   if (!res.ok) throw new Error(`AGFS list ${dir} failed: ${res.status}`);
@@ -456,9 +480,9 @@ async function copyAgfsAgentFiles(fromAgentId: string, toAgentId: string): Promi
 
 async function listS3AgentKeys(agentId: string): Promise<string[]> {
   const prefixes = [
+    `${s3Key(agentId)}/`,
     `${s3Key('uploads', agentId)}/`,
     `${s3Key('downloads', agentId)}/`,
-    `${s3Key(agentId)}/`, // compatibility with the previous single-prefix layout
   ];
   const keys: string[] = [];
   for (const prefix of prefixes) {
@@ -484,9 +508,9 @@ async function copyS3AgentFiles(fromAgentId: string, toAgentId: string): Promise
   for (const key of keys) {
     const fileName = key.split('/').filter(Boolean).at(-1);
     if (!fileName) continue;
-    const targetKey = key.includes(`/downloads/${fromAgentId}/`) || fileName === 'current.zip'
-      ? s3DownloadKey(toAgentId, fileName)
-      : s3UploadKey(toAgentId, fileName);
+    const versionMatch = fileName.match(/^(?:v|file-)(\d+)\.zip$/);
+    if (!versionMatch) continue;
+    const targetKey = s3StoredFileKey(agentFilePath(toAgentId, Number(versionMatch[1])));
     await s3.send(new CopyObjectCommand({
       Bucket: S3_BUCKET,
       CopySource: s3CopySource(key),
@@ -501,6 +525,19 @@ async function copyAgentFiles(fromAgentId: string, toAgentId: string): Promise<v
   return copyLocalAgentFiles(fromAgentId, toAgentId);
 }
 
+async function copyAgentFile(sourcePath: string, fromAgentId: string, fromVersion: number | undefined, toAgentId: string, toVersion: number): Promise<string> {
+  const stream = await getAgentFileStream(sourcePath, { agentId: fromAgentId, version: fromVersion });
+  if (!stream) throw new Error('Agent file not found');
+
+  const tmpPath = join(tmpdir(), `getagents-copy-${crypto.randomUUID()}.zip`);
+  try {
+    await pipeline(stream, createWriteStream(tmpPath));
+    return await saveAgentFileFromPath(toAgentId, toVersion, tmpPath);
+  } finally {
+    await unlink(tmpPath).catch(() => undefined);
+  }
+}
+
 async function deleteLocalAgentFiles(agentId: string): Promise<void> {
   for (const dir of [
     join(AGENTS_ROOT, 'uploads', agentId),
@@ -513,6 +550,7 @@ async function deleteLocalAgentFiles(agentId: string): Promise<void> {
 
 async function deleteLocalAgentVersionFile(agentId: string, version: number): Promise<void> {
   for (const path of [
+    localStoredFilePath(agentFilePath(agentId, version)),
     getVersionPath(agentId, version),
     join(getLegacyAgentDir(agentId), versionFileName(version)),
   ]) {
@@ -521,16 +559,17 @@ async function deleteLocalAgentVersionFile(agentId: string, version: number): Pr
 }
 
 async function deleteAgfsAgentFiles(agentId: string): Promise<void> {
-  for (const scope of ['uploads', 'downloads', 'agents'] as const) {
+  for (const scope of ['', 'uploads', 'downloads', 'agents'] as const) {
     const entries = await listAgfsAgentFiles(scope, agentId);
     for (const entry of entries) {
-      await fetch(agfsUrl('files', agfsPath(scope, agentId, entry)), { method: 'DELETE' }).catch(() => undefined);
+      await fetch(agfsUrl('files', scope ? agfsPath(scope, agentId, entry) : agfsPath(agentId, entry)), { method: 'DELETE' }).catch(() => undefined);
     }
   }
 }
 
 async function deleteAgfsAgentVersionFile(agentId: string, version: number): Promise<void> {
   const fileName = versionFileName(version);
+  await fetch(agfsUrl('files', agfsPath(agentFilePath(agentId, version))), { method: 'DELETE' }).catch(() => undefined);
   for (const scope of ['uploads', 'agents'] as const) {
     await fetch(agfsUrl('files', agfsPath(scope, agentId, fileName)), { method: 'DELETE' }).catch(() => undefined);
   }
@@ -546,6 +585,7 @@ async function deleteS3AgentFiles(agentId: string): Promise<void> {
 async function deleteS3AgentVersionFile(agentId: string, version: number): Promise<void> {
   const fileName = versionFileName(version);
   await deleteS3Objects([
+    s3StoredFileKey(agentFilePath(agentId, version)),
     s3UploadKey(agentId, fileName),
     s3Key(agentId, fileName),
   ]);
@@ -563,14 +603,20 @@ async function deleteAgentVersionFile(agentId: string, version: number): Promise
   return deleteLocalAgentVersionFile(agentId, version);
 }
 
-async function getLocalAgentFileStream(agentId: string, version?: number): Promise<AgentFileStream | null> {
-  const path = getAgentFilePath(agentId, version);
-  if (existsSync(path)) return createReadStream(path);
+async function getLocalAgentFileStream(filePath: string, fallback?: { agentId: string; version?: number }): Promise<AgentFileStream | null> {
+  const storedPath = localStoredFilePath(filePath);
+  if (existsSync(storedPath)) return createReadStream(storedPath);
+  if (!fallback) return null;
 
-  const legacyPath = version !== undefined
-    ? join(getLegacyAgentDir(agentId), versionFileName(version))
-    : join(getLegacyAgentDir(agentId), 'current.zip');
+  const legacyPath = fallback.version !== undefined
+    ? getVersionPath(fallback.agentId, fallback.version)
+    : getCurrentPath(fallback.agentId);
   if (existsSync(legacyPath)) return createReadStream(legacyPath);
+
+  const olderLegacyPath = fallback.version !== undefined
+    ? join(getLegacyAgentDir(fallback.agentId), versionFileName(fallback.version))
+    : join(getLegacyAgentDir(fallback.agentId), 'current.zip');
+  if (existsSync(olderLegacyPath)) return createReadStream(olderLegacyPath);
   return null;
 }
 
@@ -581,58 +627,61 @@ async function getAgfsAgentFileBuffer(scope: 'uploads' | 'downloads' | 'agents',
   return Buffer.from(await res.arrayBuffer());
 }
 
-async function getAgfsAgentFileStream(agentId: string, version?: number): Promise<AgentFileStream | null> {
-  const fileName = version !== undefined ? versionFileName(version) : 'current.zip';
-  const scope = version !== undefined ? 'uploads' : 'downloads';
-  let res = await fetch(agfsUrl('files', agfsPath(scope, agentId, fileName)));
-  if (res.status === 404) {
-    res = await fetch(agfsUrl('files', agfsPath('agents', agentId, fileName)));
+async function getAgfsAgentFileStream(filePath: string, fallback?: { agentId: string; version?: number }): Promise<AgentFileStream | null> {
+  let res = await fetch(agfsUrl('files', agfsPath(filePath)));
+  if (res.status === 404 && fallback) {
+    const fileName = fallback.version !== undefined ? versionFileName(fallback.version) : 'current.zip';
+    const scope = fallback.version !== undefined ? 'uploads' : 'downloads';
+    res = await fetch(agfsUrl('files', agfsPath(scope, fallback.agentId, fileName)));
+  }
+  if (res.status === 404 && fallback) {
+    const fileName = fallback.version !== undefined ? versionFileName(fallback.version) : 'current.zip';
+    res = await fetch(agfsUrl('files', agfsPath('agents', fallback.agentId, fileName)));
   }
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`AGFS read ${fileName} failed: ${res.status}`);
+  if (!res.ok) throw new Error(`AGFS read ${filePath} failed: ${res.status}`);
   if (!res.body) return null;
   return Readable.fromWeb(res.body as import('stream/web').ReadableStream);
 }
 
-async function getS3AgentFileStream(agentId: string, version?: number): Promise<AgentFileStream | null> {
-  const fileName = version !== undefined ? versionFileName(version) : 'current.zip';
-  const key = version !== undefined ? s3UploadKey(agentId, fileName) : s3DownloadKey(agentId, fileName);
-  try {
-    const result = await s3.send(new GetObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: key,
-    }));
-    return bodyToStream(result.Body);
-  } catch (err) {
-    const name = err instanceof Error ? err.name : '';
-    const statusCode = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
-    if (name === 'NoSuchKey' || name === 'NotFound' || statusCode === 404) {
-      try {
-        const result = await s3.send(new GetObjectCommand({
-          Bucket: S3_BUCKET,
-          Key: s3Key(agentId, fileName),
-        }));
-        return bodyToStream(result.Body);
-      } catch (fallbackErr) {
-        const fallbackName = fallbackErr instanceof Error ? fallbackErr.name : '';
-        const fallbackStatusCode = (fallbackErr as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
-        if (fallbackName === 'NoSuchKey' || fallbackName === 'NotFound' || fallbackStatusCode === 404) return null;
-        throw fallbackErr;
-      }
-    }
-    throw err;
+async function getS3AgentFileStream(filePath: string, fallback?: { agentId: string; version?: number }): Promise<AgentFileStream | null> {
+  const keys = [s3StoredFileKey(filePath)];
+  if (fallback) {
+    const fileName = fallback.version !== undefined ? versionFileName(fallback.version) : 'current.zip';
+    keys.push(
+      ...(fallback.version !== undefined
+        ? [s3UploadKey(fallback.agentId, fileName), s3Key(fallback.agentId, fileName)]
+        : [s3DownloadKey(fallback.agentId, fileName), s3Key(fallback.agentId, fileName)])
+    );
   }
+
+  for (const key of keys) {
+    try {
+      const result = await s3.send(new GetObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: key,
+      }));
+      return bodyToStream(result.Body);
+    } catch (err) {
+      const name = err instanceof Error ? err.name : '';
+      const statusCode = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+      if (name === 'NoSuchKey' || name === 'NotFound' || statusCode === 404) continue;
+      throw err;
+    }
+  }
+  return null;
 }
 
-async function getAgentFileStream(agentId: string, version?: number): Promise<AgentFileStream | null> {
-  if (STORAGE_DRIVER === 'agfs') return getAgfsAgentFileStream(agentId, version);
-  if (STORAGE_DRIVER === 's3') return getS3AgentFileStream(agentId, version);
-  return getLocalAgentFileStream(agentId, version);
+async function getAgentFileStream(filePath: string, fallback?: { agentId: string; version?: number }): Promise<AgentFileStream | null> {
+  if (STORAGE_DRIVER === 'agfs') return getAgfsAgentFileStream(filePath, fallback);
+  if (STORAGE_DRIVER === 's3') return getS3AgentFileStream(filePath, fallback);
+  return getLocalAgentFileStream(filePath, fallback);
 }
 
 export {
   ensureAgentDir,
   getAgentDir,
+  agentFilePath,
   hashAgentFile,
   saveAgentFile,
   saveAgentFileFromPath,
@@ -641,6 +690,7 @@ export {
   commitDirectAgentUpload,
   getAgentFilePath,
   copyAgentFiles,
+  copyAgentFile,
   deleteAgentFiles,
   deleteAgentVersionFile,
   getAgentFileStream,

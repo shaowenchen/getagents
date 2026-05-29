@@ -2,7 +2,7 @@ import { Router } from 'express';
 import * as db from '../db/store.js';
 import { requireAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import { copyAgentFiles } from '../utils/fileStore.js';
+import { agentFilePath, copyAgentFile } from '../utils/fileStore.js';
 import { validateAgentName } from './agentMetadata.js';
 
 const router = Router();
@@ -53,11 +53,16 @@ router.post('/:token/install', requireAuth, asyncHandler(async (req, res) => {
     isPublic: false,
   });
 
-  // Copy files from source
-  await copyAgentFiles(agent.id, newAgent.id);
+  // Copy latest file from source into this user's agent path.
+  const latest = (await db.getVersions(agent.id))[0];
+  const sourceVersion = latest?.version ?? 1;
+  const sourcePath = latest?.snapshot.filePath || agent.filePath || agentFilePath(agent.id, sourceVersion);
+  const filePath = await copyAgentFile(sourcePath, agent.id, sourceVersion, newAgent.id, 1);
+  const savedAgent = await db.updateAgent(newAgent.id, { filePath }) || newAgent;
+  await db.createVersion(newAgent.id, 'Installed from share link');
   await db.recordImport(newAgent.id, 'share');
 
-  res.status(201).json(newAgent);
+  res.status(201).json(savedAgent);
 }));
 
 export default router;

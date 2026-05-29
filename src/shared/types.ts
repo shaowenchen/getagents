@@ -9,6 +9,7 @@ export interface AgentConfig {
   avatar?: string;
   description: string;
   filename: string;
+  filePath?: string;
   fileSize: number;
   fileHash: string;
   tags?: string[];
@@ -39,6 +40,7 @@ export interface AgentSnapshot {
   type?: string;
   description: string;
   filename: string;
+  filePath?: string;
   fileSize: number;
   fileHash: string;
   tags?: string[];

@@ -61,6 +61,7 @@ async function init(): Promise<void> {
       avatar TEXT,
       description TEXT NOT NULL,
       filename TEXT NOT NULL,
+      file_path TEXT,
       file_size INT NOT NULL DEFAULT 0,
       file_hash VARCHAR(128) NOT NULL,
       is_public TINYINT(1) NOT NULL DEFAULT 0,
@@ -186,6 +187,7 @@ async function migrateSchema(db: Pool): Promise<void> {
   await ensureMysqlColumn(db, 'users', 'upload_key', 'TEXT');
   await ensureMysqlColumn(db, 'users', 'download_key', 'TEXT');
   await ensureMysqlColumn(db, 'agents', 'agent_type', "VARCHAR(32) NOT NULL DEFAULT 'currentdir'");
+  await ensureMysqlColumn(db, 'agents', 'file_path', 'TEXT');
   await ensureMysqlColumn(db, 'agents', 'is_public', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureMysqlColumn(db, 'agents', 'likes_count', 'INT NOT NULL DEFAULT 0');
   await ensureMysqlColumn(db, 'agents', 'share_token', 'VARCHAR(64)');
@@ -306,7 +308,7 @@ function parseDsn(value: string): PoolOptions {
 
 type AgentRow = RowDataPacket & {
   id: string; user_id: string; name: string; agent_type: string; avatar: string | null; description: string;
-  filename: string; file_size: number; file_hash: string;
+  filename: string; file_path: string | null; file_size: number; file_hash: string;
   is_public: number; tags_json: string | null;
   download_count: number; likes_count: number;
   share_token: string | null; share_password: string | null; published_version?: number | null;
@@ -347,6 +349,7 @@ function toAgent(row: AgentRow): AgentConfig {
     id: row.id, userId: row.user_id, ownerUsername: row.owner_username ?? undefined, name: row.name, avatar: row.avatar ?? undefined,
     type: (row.agent_type as AgentConfig['type']) || 'currentdir',
     description: row.description, filename: row.filename,
+    filePath: row.file_path ?? undefined,
     fileSize: Number(row.file_size || 0), fileHash: row.file_hash,
     tags: parseJson<string[] | undefined>(row.tags_json, undefined),
     isPublic: Boolean(row.is_public),
@@ -411,6 +414,7 @@ function agentSnapshotFields(agent: AgentConfig): Record<string, unknown> {
     type: agent.type,
     description: agent.description,
     filename: agent.filename,
+    filePath: agent.filePath,
     fileSize: agent.fileSize,
     fileHash: agent.fileHash,
     tags: agent.tags,
@@ -423,13 +427,13 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
   const db = requirePool();
   await db.execute(`
     INSERT INTO agents (
-      id, user_id, name, agent_type, avatar, description, filename, file_size, file_hash,
+      id, user_id, name, agent_type, avatar, description, filename, file_path, file_size, file_hash,
       is_public, tags_json, download_count, likes_count,
       share_token, share_password, created_at, updated_at, deleted_at, deleted_by
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON DUPLICATE KEY UPDATE
       name=VALUES(name), agent_type=VALUES(agent_type), avatar=VALUES(avatar), description=VALUES(description),
-      filename=VALUES(filename), file_size=VALUES(file_size), file_hash=VALUES(file_hash),
+      filename=VALUES(filename), file_path=VALUES(file_path), file_size=VALUES(file_size), file_hash=VALUES(file_hash),
       is_public=VALUES(is_public),
       tags_json=VALUES(tags_json),
       download_count=VALUES(download_count), likes_count=VALUES(likes_count),
@@ -438,7 +442,7 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
       updated_at=VALUES(updated_at)
   `, [
     agent.id, agent.userId, agent.name, agent.type, agent.avatar ?? null, agent.description,
-    agent.filename, agent.fileSize, agent.fileHash,
+    agent.filename, agent.filePath ?? null, agent.fileSize, agent.fileHash,
     agent.isPublic ? 1 : 0,
     stringifyOptional(agent.tags),
     agent.downloadCount || 0, agent.likesCount || 0,
@@ -736,6 +740,7 @@ export async function createAgent(userId: string, input: Partial<AgentConfig> & 
     type: input.type || 'currentdir',
     description: input.description || '',
     filename: input.filename,
+    filePath: input.filePath,
     fileSize: input.fileSize,
     fileHash: input.fileHash,
     tags: input.tags,
@@ -761,11 +766,10 @@ export async function updateAgent(id: string, input: Partial<AgentConfig>): Prom
     updatedAt: Date.now(),
   };
 
+  await saveAgent(updated);
   const meaningfulChange = input.name !== undefined || input.description !== undefined
     || input.type !== undefined || input.filename !== undefined || input.tags !== undefined;
   if (meaningfulChange) await createVersion(id, 'Update');
-
-  await saveAgent(updated);
   return updated;
 }
 

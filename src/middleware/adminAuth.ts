@@ -24,7 +24,7 @@ function extractToken(req: Request): string | undefined {
   return undefined;
 }
 
-function extractApiKey(req: Request): string | undefined {
+function extractApiKey(req: Request, purposes: ApiKeyPurpose[]): string | undefined {
   const header = req.headers['x-api-key'];
   if (typeof header === 'string' && header.trim()) return header.trim();
   if (Array.isArray(header) && header[0]) return String(header[0]).trim();
@@ -32,7 +32,7 @@ function extractApiKey(req: Request): string | undefined {
   const auth = req.headers.authorization;
   if (auth?.startsWith('ApiKey ')) return auth.slice(7).trim();
 
-  const queryKey = req.query.downloadKey || req.query.apiKey || req.query.key;
+  const queryKey = purposes.includes('download') ? req.query.downloadKey : undefined;
   if (typeof queryKey === 'string' && queryKey.trim()) return queryKey.trim();
   return undefined;
 }
@@ -95,7 +95,7 @@ function requireAuthWithPurposes(req: Request, res: Response, next: NextFunction
   }
 
   // 2) X-API-Key / Authorization: ApiKey <key> (CLI / automation)
-  const apiKey = extractApiKey(req);
+  const apiKey = extractApiKey(req, purposes);
   if (apiKey) {
     verifyApiKey(apiKey, purposes)
       .then((userId) => {
@@ -118,9 +118,9 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 }
 
 export function requireUploadAuth(req: Request, res: Response, next: NextFunction): void {
-  requireAuthWithPurposes(req, res, next, ['upload', 'login']);
+  requireAuthWithPurposes(req, res, next, ['upload']);
 }
 
 export function requireDownloadAuth(req: Request, res: Response, next: NextFunction): void {
-  requireAuthWithPurposes(req, res, next, ['download', 'login']);
+  requireAuthWithPurposes(req, res, next, ['download']);
 }

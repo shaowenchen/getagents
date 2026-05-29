@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import * as db from '../db/store.js';
 import { requireAuth, requireDownloadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import { hashAgentFile, saveAgentFileFromPath, getAgentFileStream, deleteAgentVersionFile } from '../utils/fileStore.js';
+import { agentFilePath, hashAgentFile, saveAgentFileFromPath, getAgentFileStream, deleteAgentVersionFile } from '../utils/fileStore.js';
 import { inferAccessUrl, normalizeRoutePrefix } from '../utils/accessUrl.js';
 import { cleanupUploadedFile, createZipUpload, validateAgentName, validateAgentType, validateManagedTags } from './agentMetadata.js';
 import type { AgentConfig } from '../shared/types.js';
@@ -26,7 +26,7 @@ async function allowPublicOrDownloadAuth(req: Request, res: Response, next: Next
   (req as any).agent = agent;
   const requestedVersion = req.params.version ? Number(req.params.version) : undefined;
   const published = await db.getPublishedVersion(req.params.id);
-  const hasAuthKey = Boolean(req.headers.authorization || req.headers['x-api-key'] || req.query.apiKey || req.query.downloadKey);
+  const hasAuthKey = Boolean(req.headers.authorization || req.headers['x-api-key'] || req.query.downloadKey);
   if (published && !hasAuthKey && (requestedVersion === undefined || published.version === requestedVersion)) {
     (req as any).publicVersion = published.version;
     return next();
@@ -87,10 +87,11 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
       isPublic: false,
     });
 
-    await saveAgentFileFromPath(agent.id, 1, req.file.path);
+    const filePath = await saveAgentFileFromPath(agent.id, 1, req.file.path);
+    const savedAgent = await db.updateAgent(agent.id, { filePath }) || agent;
     await db.createVersion(agent.id, 'Initial upload');
 
-    res.status(201).json(agent);
+    res.status(201).json(savedAgent);
   } finally {
     await cleanupUploadedFile(req.file);
   }
@@ -137,7 +138,7 @@ router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (
 
       const versions = await db.getVersions(req.params.id);
       const nextVersion = (versions[0]?.version ?? 0) + 1;
-      await saveAgentFileFromPath(req.params.id, nextVersion, req.file.path);
+      patch.filePath = await saveAgentFileFromPath(req.params.id, nextVersion, req.file.path);
     }
 
     const agent = await db.updateAgent(req.params.id, patch);
@@ -168,8 +169,9 @@ router.get('/:id/download', asyncHandler(allowPublicOrDownloadAuth), asyncHandle
     ? await db.getVersion(req.params.id, publicVersion)
     : (await db.getVersions(req.params.id))[0];
   const version = versionRecord?.version ?? 1;
+  const filePath = versionRecord?.snapshot.filePath || agent.filePath || agentFilePath(req.params.id, version);
 
-  const stream = await getAgentFileStream(req.params.id, publicVersion);
+  const stream = await getAgentFileStream(filePath, { agentId: req.params.id, version: publicVersion });
   if (!stream) return res.status(404).json({ error: 'Agent file not found' });
 
   res.setHeader('Content-Type', 'application/zip');
@@ -183,8 +185,10 @@ router.get('/:id/download/:version', asyncHandler(allowPublicOrDownloadAuth), as
 
   const version = Number(req.params.version);
   if (isNaN(version)) return res.status(400).json({ error: 'Invalid version number' });
+  const versionRecord = await db.getVersion(req.params.id, version);
+  const filePath = versionRecord?.snapshot.filePath || agentFilePath(req.params.id, version);
 
-  const stream = await getAgentFileStream(req.params.id, version);
+  const stream = await getAgentFileStream(filePath, { agentId: req.params.id, version });
   if (!stream) return res.status(404).json({ error: 'Version file not found' });
 
   res.setHeader('Content-Type', 'application/zip');

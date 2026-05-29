@@ -2,7 +2,7 @@ import { Router, type Request } from 'express';
 import * as db from '../db/store.js';
 import { requireAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import { copyAgentFiles } from '../utils/fileStore.js';
+import { agentFilePath, copyAgentFile } from '../utils/fileStore.js';
 import { validateAgentName } from './agentMetadata.js';
 import type { AgentConfig } from '../shared/types.js';
 
@@ -86,14 +86,16 @@ router.post('/:id/install', requireAuth, asyncHandler(async (req, res) => {
     isPublic: false,
   });
 
-  // Copy agent files
-  await copyAgentFiles(source.id, newAgent.id);
+  // Copy the published file into this user's agent path.
+  const sourcePath = published.snapshot.filePath || source.filePath || agentFilePath(source.id, published.version);
+  const filePath = await copyAgentFile(sourcePath, source.id, published.version, newAgent.id, 1);
+  const savedAgent = await db.updateAgent(newAgent.id, { filePath }) || newAgent;
 
   // Create version record
   await db.createVersion(newAgent.id, 'Installed from marketplace');
   await db.recordImport(newAgent.id, 'marketplace');
 
-  res.status(201).json(newAgent);
+  res.status(201).json(savedAgent);
 }));
 
 router.post('/:id/like', asyncHandler(async (req, res) => {

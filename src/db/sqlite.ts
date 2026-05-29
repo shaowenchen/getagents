@@ -50,6 +50,7 @@ db.exec(`
     description TEXT NOT NULL,
     agent_type TEXT NOT NULL DEFAULT 'currentdir',
     filename TEXT NOT NULL,
+    file_path TEXT,
     file_size INTEGER NOT NULL DEFAULT 0,
     file_hash TEXT NOT NULL,
     is_public INTEGER NOT NULL DEFAULT 0,
@@ -157,6 +158,7 @@ function migrateSchema(): void {
   ensureSqliteColumn('users', 'upload_key', 'TEXT');
   ensureSqliteColumn('users', 'download_key', 'TEXT');
   ensureSqliteColumn('agents', 'agent_type', "TEXT NOT NULL DEFAULT 'currentdir'");
+  ensureSqliteColumn('agents', 'file_path', 'TEXT');
   ensureSqliteColumn('agents', 'is_public', 'INTEGER NOT NULL DEFAULT 0');
   ensureSqliteColumn('agents', 'likes_count', 'INTEGER NOT NULL DEFAULT 0');
   ensureSqliteColumn('agents', 'share_token', 'TEXT');
@@ -252,6 +254,7 @@ function rowToAgent(row: Record<string, unknown>): AgentConfig {
     avatar: (row.avatar as string) || undefined,
     description: row.description as string,
     filename: row.filename as string,
+    filePath: (row.file_path as string) || undefined,
     fileSize: Number(row.file_size || 0),
     fileHash: row.file_hash as string,
     tags: tryParseJson(row.tags_json as string),
@@ -275,6 +278,7 @@ function agentToRow(agent: Partial<AgentConfig>): Record<string, unknown> {
   if (agent.avatar !== undefined) row.avatar = agent.avatar;
   if (agent.description !== undefined) row.description = agent.description;
   if (agent.filename !== undefined) row.filename = agent.filename;
+  if (agent.filePath !== undefined) row.file_path = agent.filePath;
   if (agent.fileSize !== undefined) row.file_size = agent.fileSize;
   if (agent.fileHash !== undefined) row.file_hash = agent.fileHash;
   if (agent.tags !== undefined) row.tags_json = JSON.stringify(agent.tags);
@@ -566,6 +570,7 @@ export async function createAgent(userId: string, data: Partial<AgentConfig> & {
     type: data.type || 'currentdir',
     description: data.description || '',
     filename: data.filename,
+    filePath: data.filePath,
     fileSize: data.fileSize,
     fileHash: data.fileHash,
     tags: data.tags,
@@ -575,8 +580,8 @@ export async function createAgent(userId: string, data: Partial<AgentConfig> & {
     createdAt: now,
     updatedAt: now,
   };
-  const insert = db.prepare(`INSERT INTO agents (id,user_id,name,agent_type,avatar,description,filename,file_size,file_hash,is_public,tags_json,download_count,likes_count,share_token,share_password,created_at,updated_at,deleted_at,deleted_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  insert.run(agent.id, agent.userId, agent.name, agent.type, null, agent.description, agent.filename, agent.fileSize, agent.fileHash, agent.isPublic ? 1 : 0, JSON.stringify(agent.tags || []), agent.downloadCount, agent.likesCount, null, null, agent.createdAt, agent.updatedAt, null, null);
+  const insert = db.prepare(`INSERT INTO agents (id,user_id,name,agent_type,avatar,description,filename,file_path,file_size,file_hash,is_public,tags_json,download_count,likes_count,share_token,share_password,created_at,updated_at,deleted_at,deleted_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  insert.run(agent.id, agent.userId, agent.name, agent.type, null, agent.description, agent.filename, agent.filePath || null, agent.fileSize, agent.fileHash, agent.isPublic ? 1 : 0, JSON.stringify(agent.tags || []), agent.downloadCount, agent.likesCount, null, null, agent.createdAt, agent.updatedAt, null, null);
   return agent;
 }
 
@@ -592,12 +597,12 @@ export async function updateAgent(id: string, data: Partial<AgentConfig>): Promi
     db.prepare(`UPDATE agents SET ${sets} WHERE id=?`).run(...values, id);
   }
 
-  // Auto-create version snapshot on meaningful changes
-  if (data.name !== undefined || data.type !== undefined || data.description !== undefined || data.filename !== undefined || data.tags !== undefined) {
+  const updated = await getAgent(id);
+  if (updated && (data.name !== undefined || data.type !== undefined || data.description !== undefined || data.filename !== undefined || data.tags !== undefined)) {
     await createVersion(id, 'Update');
   }
 
-  return getAgent(id);
+  return updated;
 }
 
 export async function deleteAgent(id: string, deletedBy?: string): Promise<boolean> {
@@ -627,6 +632,7 @@ function agentSnapshotFields(agent: AgentConfig): Record<string, unknown> {
     type: agent.type,
     description: agent.description,
     filename: agent.filename,
+    filePath: agent.filePath,
     fileSize: agent.fileSize,
     fileHash: agent.fileHash,
     tags: agent.tags,

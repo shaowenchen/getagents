@@ -616,7 +616,7 @@ function buildAgentTypeOptions(selected) {
 }
 
 function buildCliCommand({ agentId, agentName, type, backupDirs, description } = {}) {
-  const apiKey = getUploadApiKey() || getAdminApiKey();
+  const apiKey = getUploadApiKey();
   const keyPart = `GETAGENTS_API_KEY=${shellQuote(apiKey || '<your-upload-key>')}`;
   const args = [];
   args.push('--type', shellQuote(normalizeAgentType(type)));
@@ -865,7 +865,7 @@ function renderAgentFormCliCommand() {
 }
 
 function renderAgentFormCliCommandContent() {
-  const apiKey = getUploadApiKey() || getAdminApiKey();
+  const apiKey = getUploadApiKey();
   const isEditing = Boolean(state.editingAgent);
 
   return `
@@ -878,7 +878,7 @@ function renderAgentFormCliCommandContent() {
     ${isEditing ? '' : renderCliCommandParams()}
     ${apiKey ? '' : `
       <div style="margin-bottom:0.5rem;padding:0.5rem 0.6rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;color:#9a3412;font-size:0.8rem">
-        Replace <code>&lt;your-api-key&gt;</code> with your API key, or sign in again to inject it automatically.
+        Replace <code>&lt;your-upload-key&gt;</code> with your Upload API Key, or sign in again to inject it automatically.
       </div>
     `}
     <pre class="cli-code cli-mini"><code id="agent-form-cli-cmd">${escapeHtml(buildAgentFormCliCommand())}</code></pre>
@@ -1106,7 +1106,7 @@ window.cancelEdit = () => {
 // ---- Download ----
 
 window.downloadAgent = (id) => {
-  const downloadKey = getDownloadApiKey() || getAdminApiKey();
+  const downloadKey = getDownloadApiKey();
   const suffix = downloadKey ? `?downloadKey=${encodeURIComponent(downloadKey)}` : '';
   const url = publicUrl(`/api/agents/${id}/download${suffix}`);
   const a = document.createElement('a');

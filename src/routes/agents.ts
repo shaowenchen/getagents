@@ -11,6 +11,11 @@ import crypto from 'crypto';
 const router = Router();
 const upload = createZipUpload();
 
+function downloadFileName(agentName: string, version: number): string {
+  const safeName = agentName.replace(/[^a-z0-9-]/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'agent';
+  return `${safeName}-v${version}.zip`;
+}
+
 async function allowPublicOrDownloadAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const agent = await db.getAgent(req.params.id);
   if (!agent) {
@@ -159,13 +164,16 @@ router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
 router.get('/:id/download', asyncHandler(allowPublicOrDownloadAuth), asyncHandler(async (req, res) => {
   const agent = (req as any).agent || await db.getAgent(req.params.id);
   const publicVersion = (req as any).publicVersion;
-  const versionRecord = publicVersion ? await db.getVersion(req.params.id, publicVersion) : undefined;
+  const versionRecord = publicVersion
+    ? await db.getVersion(req.params.id, publicVersion)
+    : (await db.getVersions(req.params.id))[0];
+  const version = versionRecord?.version ?? 1;
 
   const stream = await getAgentFileStream(req.params.id, publicVersion);
   if (!stream) return res.status(404).json({ error: 'Agent file not found' });
 
   res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="${versionRecord ? `${agent.name}-v${publicVersion}.zip` : agent.filename}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName(agent.name, version)}"`);
   res.setHeader('Content-Length', versionRecord?.snapshot.fileSize || agent.fileSize);
   stream.pipe(res);
 }));
@@ -180,7 +188,7 @@ router.get('/:id/download/:version', asyncHandler(allowPublicOrDownloadAuth), as
   if (!stream) return res.status(404).json({ error: 'Version file not found' });
 
   res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="${agent.name}-v${version}.zip"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName(agent.name, version)}"`);
   stream.pipe(res);
 }));
 

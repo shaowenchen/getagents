@@ -968,7 +968,6 @@ function renderAgentCard(agent) {
   const name = escapeHtml(agent.name);
   const initial = agentInitial(agent);
   const color = avatarColor(agent.name);
-  const filename = escapeHtml(truncate(agent.filename || '', 40));
   const fileSizeLabel = formatFileSize(agent.fileSize || 0);
 
   return `
@@ -983,7 +982,6 @@ function renderAgentCard(agent) {
           </div>
           <p class="agent-description">${escapeHtml(truncate(agent.description || 'No description', 120))}</p>
           <div class="agent-meta">
-            <span class="agent-chip" title="${escapeHtml(agent.fileHash || '')}">${filename}</span>
             <span class="agent-chip">${fileSizeLabel}</span>
             <span class="agent-chip" style="color:var(--muted)">${agent.downloadCount || 0} downloads</span>
           </div>

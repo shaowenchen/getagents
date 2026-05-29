@@ -413,8 +413,10 @@ async function renderAdminDashboard() {
     return;
   }
 
+  const agentParams = new URLSearchParams({ all: '1' });
+  if (state.adminUsernameFilter) agentParams.set('username', state.adminUsernameFilter);
   const [agents, typeOptions, userOptions] = await Promise.all([
-    api('/agents', { admin: true }),
+    api(`/agents?${agentParams.toString()}`, { admin: true }),
     api('/admin/types', { admin: true }),
     isSystemAdmin ? api('/admin/users', { admin: true }) : Promise.resolve([]),
   ]);
@@ -459,17 +461,26 @@ function renderAdminTabs(agents, isSystemAdmin = false) {
 function renderAdminPanel(agents, isSystemAdmin = false) {
   if (state.adminTab === 'types') return renderTypeManager(isSystemAdmin);
   if (state.adminTab === 'users') return renderUserManager();
-  return renderAgentsAdminPanel(agents);
+  return renderAgentsAdminPanel(agents, isSystemAdmin);
 }
 
-function renderAgentsAdminPanel(agents) {
+function renderAgentsAdminPanel(agents, isSystemAdmin = false) {
+  const users = state.userOptions || [];
   return `
     <div class="card admin-table-card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem">
         <h3 style="margin:0">Agents</h3>
-        <span class="text-muted">${agents.length} total</span>
+        <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
+          ${isSystemAdmin ? `
+            <select class="form-select" style="min-width:180px" onchange="setAdminUsernameFilter(this.value)">
+              <option value="">All users</option>
+              ${users.map(user => `<option value="${escapeHtml(user.username)}" ${state.adminUsernameFilter === user.username ? 'selected' : ''}>${escapeHtml(user.username)}</option>`).join('')}
+            </select>
+          ` : ''}
+          <span class="text-muted">${agents.length} total</span>
+        </div>
       </div>
-      ${renderAgentsTable(agents)}
+      ${renderAgentsTable(agents, isSystemAdmin)}
     </div>
   `;
 }
@@ -481,7 +492,12 @@ window.setAdminTab = async (tab) => {
   await renderAdminDashboard();
 };
 
-function renderAgentsTable(agents) {
+window.setAdminUsernameFilter = async (username) => {
+  state.adminUsernameFilter = String(username || '');
+  await renderAdminDashboard();
+};
+
+function renderAgentsTable(agents, isSystemAdmin = false) {
   if (!agents.length) {
     return '<div class="empty-state" style="padding:1.5rem">No agents yet.</div>';
   }
@@ -491,6 +507,7 @@ function renderAgentsTable(agents) {
       <table class="admin-table">
         <colgroup>
           <col class="admin-col-name">
+          ${isSystemAdmin ? '<col class="admin-col-user">' : ''}
           <col class="admin-col-type">
           <col class="admin-col-status">
           <col class="admin-col-file">
@@ -501,6 +518,7 @@ function renderAgentsTable(agents) {
         <thead>
           <tr>
             <th>Name</th>
+            ${isSystemAdmin ? '<th>User</th>' : ''}
             <th>Type</th>
             <th>Status</th>
             <th>File</th>
@@ -521,10 +539,11 @@ function renderAgentsTable(agents) {
                   </div>
                 </div>
               </td>
+              ${isSystemAdmin ? `<td><span class="text-muted">${escapeHtml(agent.ownerUsername || agent.userId || '')}</span></td>` : ''}
               <td><span class="admin-type-badge">${escapeHtml(agentTypeLabel(agent.type))}</span></td>
               <td>
                 <div class="admin-status-stack">
-                  ${agent.publishedVersion ? `<span class="admin-status-badge status-public">RELEASED v${agent.publishedVersion}</span>` : '<span class="text-muted">—</span>'}
+                  ${agent.deletedAt ? '<span class="admin-status-badge" style="background:#64748b">DELETED</span>' : agent.publishedVersion ? `<span class="admin-status-badge status-public">RELEASED v${agent.publishedVersion}</span>` : '<span class="text-muted">—</span>'}
                 </div>
               </td>
               <td>
@@ -537,9 +556,11 @@ function renderAgentsTable(agents) {
               <td class="admin-updated-cell">${formatTime(agent.updatedAt)}</td>
               <td>
                 <div class="agent-actions admin-agent-actions">
-                  <button class="btn-ghost" onclick="navigateTo('/agents/${agent.id}')">Detail</button>
-                  <button class="btn-ghost" onclick="downloadAgent('${agent.id}')">Download</button>
-                  <button class="btn-ghost btn-danger" onclick="deleteAgent('${agent.id}')">Delete</button>
+                  ${agent.deletedAt ? '<span class="text-muted">Deleted</span>' : `
+                    <button class="btn-ghost" onclick="navigateTo('/agents/${agent.id}')">Detail</button>
+                    <button class="btn-ghost" onclick="downloadAgent('${agent.id}')">Download</button>
+                    <button class="btn-ghost btn-danger" onclick="deleteAgent('${agent.id}')">Delete</button>
+                  `}
                 </div>
               </td>
             </tr>

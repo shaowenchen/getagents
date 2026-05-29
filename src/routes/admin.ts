@@ -106,25 +106,26 @@ router.get('/status', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 router.get('/tags', requireAuth, asyncHandler(async (req, res) => {
-  const userId = (req as any).userId;
-  const tags = await getManagedTags(userId);
+  const tags = await getManagedTags();
   res.json(tags);
 }));
 
 router.post('/tags', requireAuth, asyncHandler(async (req, res) => {
-  const userId = (req as any).userId;
+  if (!await requireSystemAdmin(req, res)) return;
+
   const name = String(req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name is required' });
   if (name.length > 32) return res.status(400).json({ error: 'tag name must be 32 characters or less' });
   if (name.includes(',')) return res.status(400).json({ error: 'tag name cannot contain commas' });
 
-  const tag = await createManagedTag(userId, name);
+  const tag = await createManagedTag(name);
   res.status(201).json(tag);
 }));
 
 router.delete('/tags/:id', requireAuth, asyncHandler(async (req, res) => {
-  const userId = (req as any).userId;
-  if (!await deleteManagedTag(userId, req.params.id)) {
+  if (!await requireSystemAdmin(req, res)) return;
+
+  if (!await deleteManagedTag(req.params.id)) {
     return res.status(404).json({ error: 'Tag not found' });
   }
   res.status(204).end();

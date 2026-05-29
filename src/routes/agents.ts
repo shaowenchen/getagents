@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import * as db from '../db/store.js';
 import { requireAuth, requireDownloadAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import { hashAgentFile, saveAgentFileFromPath, getAgentFileStream, deleteAgentFiles, deleteAgentVersionFile } from '../utils/fileStore.js';
+import { hashAgentFile, saveAgentFileFromPath, getAgentFileStream, deleteAgentVersionFile } from '../utils/fileStore.js';
 import { inferAccessUrl, normalizeRoutePrefix } from '../utils/accessUrl.js';
 import { cleanupUploadedFile, createZipUpload, validateAgentName, validateAgentType, validateManagedTags } from './agentMetadata.js';
 import type { AgentConfig } from '../shared/types.js';
@@ -34,7 +34,13 @@ async function allowPublicOrDownloadAuth(req: Request, res: Response, next: Next
 
 router.get('/', requireAuth, asyncHandler(async (req, res) => {
   const userId = (req as any).userId;
-  const agents = await db.getAllAgents(userId);
+  const user = await db.getUserById(userId);
+  const isSystemAdmin = user?.username === 'admin';
+  const includeAll = isSystemAdmin && req.query.all === '1';
+  const username = includeAll && typeof req.query.username === 'string' ? req.query.username.trim() : '';
+  const agents = includeAll
+    ? await db.getAllAgents(undefined, { includeDeleted: true, username })
+    : await db.getAllAgents(userId);
   res.json(agents);
 }));
 
@@ -88,6 +94,11 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
 router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (req, res) => {
   const existing = await db.getAgent(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Agent not found' });
+  const userId = (req as any).userId as string;
+  const user = await db.getUserById(userId);
+  if (existing.userId !== userId && user?.username !== 'admin') {
+    return res.status(403).json({ error: 'Not your agent' });
+  }
 
   const patch: Partial<AgentConfig> = {};
   try {
@@ -132,7 +143,14 @@ router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (
 }));
 
 router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
-  if (!await db.deleteAgent(req.params.id)) return res.status(404).json({ error: 'Agent not found' });
+  const userId = (req as any).userId as string;
+  const existing = await db.getAgent(req.params.id, { includeDeleted: true });
+  if (!existing) return res.status(404).json({ error: 'Agent not found' });
+  const user = await db.getUserById(userId);
+  if (existing.userId !== userId && user?.username !== 'admin') {
+    return res.status(403).json({ error: 'Not your agent' });
+  }
+  if (!await db.deleteAgent(req.params.id, userId)) return res.status(404).json({ error: 'Agent not found' });
   res.status(204).end();
 }));
 

@@ -3,6 +3,7 @@
 export interface AgentConfig {
   id: string;
   userId: string;
+  ownerUsername?: string;
   name: string;
   type: string;
   avatar?: string;
@@ -17,6 +18,8 @@ export interface AgentConfig {
   likesCount: number;
   shareToken?: string;
   sharePassword?: string;
+  deletedAt?: number;
+  deletedBy?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -50,7 +53,6 @@ export interface User {
 
 export interface ManagedTag {
   id: string;
-  userId: string;
   name: string;
   createdAt: number;
 }

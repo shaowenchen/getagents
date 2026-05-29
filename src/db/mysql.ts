@@ -1,7 +1,6 @@
 import mysql, { type Pool, type PoolOptions, type RowDataPacket, type ResultSetHeader } from 'mysql2/promise';
 import { v4 as uuid } from 'uuid';
 import type { AgentConfig, AgentVersion, AgentSnapshot, ManagedAgentType, ManagedTag, User } from '../shared/types.js';
-import { deleteAgentFiles } from '../utils/fileStore.js';
 
 const dsn = process.env.SQL_DSN;
 const pool: Pool | null = dsn ? mysql.createPool(parseDsn(dsn)) : null;
@@ -37,11 +36,9 @@ async function init(): Promise<void> {
   await db.query(`
     CREATE TABLE IF NOT EXISTS managed_tags (
       id VARCHAR(64) PRIMARY KEY,
-      user_id VARCHAR(64) NOT NULL,
       name VARCHAR(64) NOT NULL,
       created_at BIGINT NOT NULL,
-      UNIQUE KEY uniq_managed_tags_user_name (user_id, name),
-      CONSTRAINT fk_managed_tags_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      UNIQUE KEY uniq_managed_tags_name (name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
@@ -74,8 +71,11 @@ async function init(): Promise<void> {
       share_password VARCHAR(255),
       created_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL,
+      deleted_at BIGINT,
+      deleted_by VARCHAR(64),
       INDEX idx_agents_user_id (user_id),
       INDEX idx_agents_updated_at (updated_at),
+      INDEX idx_agents_deleted_at (deleted_at),
       INDEX idx_agents_public (is_public),
       INDEX idx_agents_share_token (share_token),
       CONSTRAINT fk_agents_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -123,6 +123,33 @@ async function ensureMysqlColumn(db: Pool, table: string, column: string, defini
   await db.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
+async function migrateGlobalTags(db: Pool): Promise<void> {
+  if (!await mysqlColumnExists(db, 'managed_tags', 'user_id')) return;
+
+  await db.query('DROP TABLE IF EXISTS managed_tags_global');
+  await db.query(`
+    CREATE TABLE managed_tags_global (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(64) NOT NULL,
+      created_at BIGINT NOT NULL,
+      UNIQUE KEY uniq_managed_tags_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  const [rows] = await db.execute<ManagedTagRow[]>(
+    'SELECT id, name, created_at FROM managed_tags ORDER BY created_at ASC, id ASC'
+  );
+  for (const row of rows) {
+    await db.execute(
+      'INSERT IGNORE INTO managed_tags_global (id, name, created_at) VALUES (?,?,?)',
+      [row.id, row.name, row.created_at]
+    );
+  }
+
+  await db.query('DROP TABLE managed_tags');
+  await db.query('RENAME TABLE managed_tags_global TO managed_tags');
+}
+
 async function migrateGlobalAgentTypes(db: Pool): Promise<void> {
   if (!await mysqlColumnExists(db, 'managed_agent_types', 'user_id')) return;
 
@@ -163,6 +190,8 @@ async function migrateSchema(db: Pool): Promise<void> {
   await ensureMysqlColumn(db, 'agents', 'likes_count', 'INT NOT NULL DEFAULT 0');
   await ensureMysqlColumn(db, 'agents', 'share_token', 'VARCHAR(64)');
   await ensureMysqlColumn(db, 'agents', 'share_password', 'VARCHAR(255)');
+  await ensureMysqlColumn(db, 'agents', 'deleted_at', 'BIGINT');
+  await ensureMysqlColumn(db, 'agents', 'deleted_by', 'VARCHAR(64)');
   await ensureMysqlColumn(db, 'agent_versions', 'is_published', 'TINYINT(1) NOT NULL DEFAULT 0');
 
   if (await mysqlColumnExists(db, 'users', 'password_hash')) {
@@ -195,6 +224,7 @@ async function migrateSchema(db: Pool): Promise<void> {
     `);
   }
 
+  await migrateGlobalTags(db);
   await migrateGlobalAgentTypes(db);
 
   await db.query(`
@@ -280,6 +310,7 @@ type AgentRow = RowDataPacket & {
   is_public: number; tags_json: string | null;
   download_count: number; likes_count: number;
   share_token: string | null; share_password: string | null; published_version?: number | null;
+  owner_username?: string | null; deleted_at: number | null; deleted_by: string | null;
   created_at: number; updated_at: number;
 };
 
@@ -289,7 +320,7 @@ type UserRow = RowDataPacket & {
 };
 
 type ManagedTagRow = RowDataPacket & {
-  id: string; user_id: string; name: string; created_at: number;
+  id: string; name: string; created_at: number;
 };
 
 type ManagedAgentTypeRow = RowDataPacket & {
@@ -313,7 +344,7 @@ function stringifyOptional(value: unknown): string | null {
 
 function toAgent(row: AgentRow): AgentConfig {
   return {
-    id: row.id, userId: row.user_id, name: row.name, avatar: row.avatar ?? undefined,
+    id: row.id, userId: row.user_id, ownerUsername: row.owner_username ?? undefined, name: row.name, avatar: row.avatar ?? undefined,
     type: (row.agent_type as AgentConfig['type']) || 'currentdir',
     description: row.description, filename: row.filename,
     fileSize: Number(row.file_size || 0), fileHash: row.file_hash,
@@ -324,6 +355,8 @@ function toAgent(row: AgentRow): AgentConfig {
     likesCount: Number(row.likes_count || 0),
     shareToken: row.share_token ?? undefined,
     sharePassword: row.share_password ?? undefined,
+    deletedAt: row.deleted_at === undefined || row.deleted_at === null ? undefined : Number(row.deleted_at),
+    deletedBy: row.deleted_by ?? undefined,
     createdAt: Number(row.created_at), updatedAt: Number(row.updated_at),
   };
 }
@@ -392,8 +425,8 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
     INSERT INTO agents (
       id, user_id, name, agent_type, avatar, description, filename, file_size, file_hash,
       is_public, tags_json, download_count, likes_count,
-      share_token, share_password, created_at, updated_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      share_token, share_password, created_at, updated_at, deleted_at, deleted_by
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON DUPLICATE KEY UPDATE
       name=VALUES(name), agent_type=VALUES(agent_type), avatar=VALUES(avatar), description=VALUES(description),
       filename=VALUES(filename), file_size=VALUES(file_size), file_hash=VALUES(file_hash),
@@ -401,6 +434,7 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
       tags_json=VALUES(tags_json),
       download_count=VALUES(download_count), likes_count=VALUES(likes_count),
       share_token=VALUES(share_token), share_password=VALUES(share_password),
+      deleted_at=VALUES(deleted_at), deleted_by=VALUES(deleted_by),
       updated_at=VALUES(updated_at)
   `, [
     agent.id, agent.userId, agent.name, agent.type, agent.avatar ?? null, agent.description,
@@ -409,7 +443,7 @@ async function saveAgent(agent: AgentConfig): Promise<void> {
     stringifyOptional(agent.tags),
     agent.downloadCount || 0, agent.likesCount || 0,
     agent.shareToken ?? null, agent.sharePassword ?? null,
-    agent.createdAt, agent.updatedAt,
+    agent.createdAt, agent.updatedAt, agent.deletedAt ?? null, agent.deletedBy ?? null,
   ]);
 }
 
@@ -505,59 +539,57 @@ export async function updateUserKeys(
 function toManagedTag(row: ManagedTagRow): ManagedTag {
   return {
     id: row.id,
-    userId: row.user_id,
     name: row.name,
     createdAt: Number(row.created_at),
   };
 }
 
-export async function getManagedTags(userId: string): Promise<ManagedTag[]> {
+export async function getManagedTags(): Promise<ManagedTag[]> {
   await ensureReady();
   const db = requirePool();
   const [rows] = await db.execute<ManagedTagRow[]>(
-    'SELECT * FROM managed_tags WHERE user_id = ? ORDER BY name',
-    [userId]
+    'SELECT * FROM managed_tags ORDER BY name'
   );
   return rows.map(toManagedTag);
 }
 
-export async function createManagedTag(userId: string, name: string): Promise<ManagedTag> {
+export async function createManagedTag(name: string): Promise<ManagedTag> {
   await ensureReady();
   const db = requirePool();
   const normalized = name.trim();
   if (!normalized) throw new Error('Tag name is required');
 
   const [existing] = await db.execute<ManagedTagRow[]>(
-    'SELECT * FROM managed_tags WHERE user_id = ? AND name = ?',
-    [userId, normalized]
+    'SELECT * FROM managed_tags WHERE name = ?',
+    [normalized]
   );
   if (existing[0]) return toManagedTag(existing[0]);
 
   const id = uuid();
   const now = Date.now();
   await db.execute(
-    'INSERT INTO managed_tags (id,user_id,name,created_at) VALUES (?,?,?,?)',
-    [id, userId, normalized, now]
+    'INSERT INTO managed_tags (id,name,created_at) VALUES (?,?,?)',
+    [id, normalized, now]
   );
-  return { id, userId, name: normalized, createdAt: now };
+  return { id, name: normalized, createdAt: now };
 }
 
-export async function deleteManagedTag(userId: string, tagId: string): Promise<boolean> {
+export async function deleteManagedTag(tagId: string): Promise<boolean> {
   await ensureReady();
   const db = requirePool();
   const [rows] = await db.execute<ManagedTagRow[]>(
-    'SELECT * FROM managed_tags WHERE id = ? AND user_id = ?',
-    [tagId, userId]
+    'SELECT * FROM managed_tags WHERE id = ?',
+    [tagId]
   );
   const tag = rows[0];
   if (!tag) return false;
 
   const [result] = await db.execute<ResultSetHeader>(
-    'DELETE FROM managed_tags WHERE id = ? AND user_id = ?',
-    [tagId, userId]
+    'DELETE FROM managed_tags WHERE id = ?',
+    [tagId]
   );
 
-  const agents = await getAllAgents(userId);
+  const agents = await getAllAgents(undefined, { includeDeleted: true });
   for (const agent of agents) {
     const tags = (agent.tags || []).filter(t => t !== tag.name);
     if (tags.length !== (agent.tags || []).length) {
@@ -644,30 +676,53 @@ export async function deleteManagedAgentType(typeId: string): Promise<boolean> {
 
 // ---- Agents ----
 
-export async function getAllAgents(userId?: string): Promise<AgentConfig[]> {
+type AgentListOptions = { includeDeleted?: boolean; username?: string };
+type AgentLookupOptions = { includeDeleted?: boolean };
+
+function agentWhereClause(userId?: string, options: AgentListOptions = {}): { sql: string; params: string[] } {
+  const conditions: string[] = [];
+  const params: string[] = [];
+  if (userId) {
+    conditions.push('a.user_id = ?');
+    params.push(userId);
+  }
+  if (options.username?.trim()) {
+    conditions.push('u.username = ?');
+    params.push(options.username.trim());
+  }
+  if (!options.includeDeleted) {
+    conditions.push('a.deleted_at IS NULL');
+  }
+  return {
+    sql: conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '',
+    params,
+  };
+}
+
+export async function getAllAgents(userId?: string, options: AgentListOptions = {}): Promise<AgentConfig[]> {
   await ensureReady();
   const db = requirePool();
   const selectSql = `
-    SELECT a.*, published.version AS published_version
+    SELECT a.*, u.username AS owner_username, published.version AS published_version
     FROM agents a
+    JOIN users u ON u.id = a.user_id
     LEFT JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
   `;
-  if (userId) {
-    const [rows] = await db.execute<AgentRow[]>(`${selectSql} WHERE a.user_id = ? ORDER BY a.updated_at DESC`, [userId]);
-    return rows.map(toAgent);
-  }
-  const [rows] = await db.query<AgentRow[]>(`${selectSql} ORDER BY a.updated_at DESC`);
+  const where = agentWhereClause(userId, options);
+  const [rows] = await db.execute<AgentRow[]>(`${selectSql}${where.sql} ORDER BY a.updated_at DESC`, where.params);
   return rows.map(toAgent);
 }
 
-export async function getAgent(id: string): Promise<AgentConfig | undefined> {
+export async function getAgent(id: string, options: AgentLookupOptions = {}): Promise<AgentConfig | undefined> {
   await ensureReady();
   const db = requirePool();
   const [rows] = await db.execute<AgentRow[]>(`
-    SELECT a.*, published.version AS published_version
+    SELECT a.*, u.username AS owner_username, published.version AS published_version
     FROM agents a
+    JOIN users u ON u.id = a.user_id
     LEFT JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
     WHERE a.id = ?
+      ${options.includeDeleted ? '' : 'AND a.deleted_at IS NULL'}
   `, [id]);
   return rows[0] ? toAgent(rows[0]) : undefined;
 }
@@ -714,13 +769,14 @@ export async function updateAgent(id: string, input: Partial<AgentConfig>): Prom
   return updated;
 }
 
-export async function deleteAgent(id: string): Promise<boolean> {
+export async function deleteAgent(id: string, deletedBy?: string): Promise<boolean> {
   await ensureReady();
   const db = requirePool();
-  const [result] = await db.execute<ResultSetHeader>('DELETE FROM agents WHERE id = ?', [id]);
-  if (result.affectedRows > 0) {
-    await deleteAgentFiles(id);
-  }
+  const now = Date.now();
+  const [result] = await db.execute<ResultSetHeader>(
+    'UPDATE agents SET deleted_at = ?, deleted_by = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL',
+    [now, deletedBy || null, now, id]
+  );
   return result.affectedRows > 0;
 }
 
@@ -834,9 +890,11 @@ export async function getPublicAgents(): Promise<AgentConfig[]> {
   await ensureReady();
   const db = requirePool();
   const [rows] = await db.query<AgentRow[]>(
-    `SELECT a.*, published.version AS published_version
+    `SELECT a.*, u.username AS owner_username, published.version AS published_version
      FROM agents a
+     JOIN users u ON u.id = a.user_id
      JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
+     WHERE a.deleted_at IS NULL
      ORDER BY a.download_count DESC, a.updated_at DESC`
   );
   return rows.map(toAgent);
@@ -845,6 +903,11 @@ export async function getPublicAgents(): Promise<AgentConfig[]> {
 export async function getAgentByShareToken(token: string): Promise<AgentConfig | undefined> {
   await ensureReady();
   const db = requirePool();
-  const [rows] = await db.execute<AgentRow[]>('SELECT * FROM agents WHERE share_token = ?', [token]);
+  const [rows] = await db.execute<AgentRow[]>(`
+    SELECT a.*, u.username AS owner_username
+    FROM agents a
+    JOIN users u ON u.id = a.user_id
+    WHERE a.share_token = ? AND a.deleted_at IS NULL
+  `, [token]);
   return rows[0] ? toAgent(rows[0]) : undefined;
 }

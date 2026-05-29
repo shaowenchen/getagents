@@ -53,7 +53,7 @@ export async function validateManagedTags(userId: string, value: unknown): Promi
   const tags = parseTagInput(value);
   if (tags === undefined) return undefined;
 
-  const allowed = new Set((await db.getManagedTags(userId)).map((tag) => tag.name));
+  const allowed = new Set((await db.getManagedTags()).map((tag) => tag.name));
   const invalid = tags.filter((tag) => !allowed.has(tag));
   if (invalid.length) {
     throw new Error(`Unknown tags: ${invalid.join(', ')}`);

@@ -13,6 +13,7 @@ const state = {
   showAgentForm: false,
   typeOptions: [],
   userOptions: [],
+  adminUsernameFilter: '',
   resetApiKeyResult: null,
   agentForm: createAgentForm(),
   agentFormFile: null,

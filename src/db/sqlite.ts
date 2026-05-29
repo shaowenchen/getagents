@@ -4,7 +4,6 @@ import { homedir } from 'os';
 import { mkdirSync } from 'fs';
 import { v4 as uuid } from 'uuid';
 import type { AgentConfig, AgentVersion, AgentSnapshot, ManagedAgentType, ManagedTag, User } from '../shared/types.js';
-import { deleteAgentFiles } from '../utils/fileStore.js';
 
 const databasePath = `${homedir()}/.getagents/getagents.sqlite`;
 
@@ -30,11 +29,9 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS managed_tags (
     id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
     name TEXT NOT NULL,
     created_at INTEGER NOT NULL,
-    UNIQUE(user_id, name),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    UNIQUE(name)
   );
 
   CREATE TABLE IF NOT EXISTS managed_agent_types (
@@ -63,6 +60,8 @@ db.exec(`
     share_password TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
+    deleted_at INTEGER,
+    deleted_by TEXT,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
@@ -97,6 +96,31 @@ function sqliteColumns(table: string): Set<string> {
 function ensureSqliteColumn(table: string, column: string, definition: string): void {
   if (sqliteColumns(table).has(column)) return;
   db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+}
+
+function migrateGlobalTags(): void {
+  if (!sqliteColumns('managed_tags').has('user_id')) return;
+
+  db.exec(`
+    DROP TABLE IF EXISTS managed_tags_global;
+    CREATE TABLE managed_tags_global (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL
+    );
+    INSERT OR IGNORE INTO managed_tags_global (id, name, created_at)
+    SELECT id, name, created_at
+    FROM managed_tags mt
+    WHERE mt.rowid = (
+      SELECT rowid
+      FROM managed_tags candidate
+      WHERE candidate.name = mt.name
+      ORDER BY candidate.created_at ASC, candidate.id ASC
+      LIMIT 1
+    );
+    DROP TABLE managed_tags;
+    ALTER TABLE managed_tags_global RENAME TO managed_tags;
+  `);
 }
 
 function migrateGlobalAgentTypes(): void {
@@ -137,6 +161,8 @@ function migrateSchema(): void {
   ensureSqliteColumn('agents', 'likes_count', 'INTEGER NOT NULL DEFAULT 0');
   ensureSqliteColumn('agents', 'share_token', 'TEXT');
   ensureSqliteColumn('agents', 'share_password', 'TEXT');
+  ensureSqliteColumn('agents', 'deleted_at', 'INTEGER');
+  ensureSqliteColumn('agents', 'deleted_by', 'TEXT');
   ensureSqliteColumn('agent_versions', 'is_published', 'INTEGER NOT NULL DEFAULT 0');
 
   const userColumns = sqliteColumns('users');
@@ -174,6 +200,7 @@ function migrateSchema(): void {
     `).run();
   }
 
+  migrateGlobalTags();
   migrateGlobalAgentTypes();
 
   db.prepare(`
@@ -219,6 +246,7 @@ function rowToAgent(row: Record<string, unknown>): AgentConfig {
   return {
     id: row.id as string,
     userId: row.user_id as string,
+    ownerUsername: (row.owner_username as string) || undefined,
     name: row.name as string,
     type: (row.agent_type as AgentConfig['type']) || 'currentdir',
     avatar: (row.avatar as string) || undefined,
@@ -233,6 +261,8 @@ function rowToAgent(row: Record<string, unknown>): AgentConfig {
     likesCount: Number(row.likes_count || 0),
     shareToken: (row.share_token as string) || undefined,
     sharePassword: (row.share_password as string) || undefined,
+    deletedAt: row.deleted_at === undefined || row.deleted_at === null ? undefined : Number(row.deleted_at),
+    deletedBy: (row.deleted_by as string) || undefined,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -253,6 +283,8 @@ function agentToRow(agent: Partial<AgentConfig>): Record<string, unknown> {
   if (agent.likesCount !== undefined) row.likes_count = agent.likesCount;
   if (agent.shareToken !== undefined) row.share_token = agent.shareToken;
   if (agent.sharePassword !== undefined) row.share_password = agent.sharePassword;
+  if (agent.deletedAt !== undefined) row.deleted_at = agent.deletedAt;
+  if (agent.deletedBy !== undefined) row.deleted_by = agent.deletedBy;
   if (agent.updatedAt !== undefined) row.updated_at = agent.updatedAt;
   return row;
 }
@@ -275,7 +307,6 @@ function rowToUser(row: Record<string, unknown>): User {
 function rowToManagedTag(row: Record<string, unknown>): ManagedTag {
   return {
     id: row.id as string,
-    userId: row.user_id as string,
     name: row.name as string,
     createdAt: Number(row.created_at),
   };
@@ -392,34 +423,34 @@ function normalizeManagedTag(name: string): string {
   return name.trim();
 }
 
-export async function getManagedTags(userId: string): Promise<ManagedTag[]> {
-  return db.prepare('SELECT * FROM managed_tags WHERE user_id = ? ORDER BY name COLLATE NOCASE')
-    .all(userId)
+export async function getManagedTags(): Promise<ManagedTag[]> {
+  return db.prepare('SELECT * FROM managed_tags ORDER BY name COLLATE NOCASE')
+    .all()
     .map((row: unknown) => rowToManagedTag(row as Record<string, unknown>));
 }
 
-export async function createManagedTag(userId: string, name: string): Promise<ManagedTag> {
+export async function createManagedTag(name: string): Promise<ManagedTag> {
   const normalized = normalizeManagedTag(name);
   if (!normalized) throw new Error('Tag name is required');
-  const existing = db.prepare('SELECT * FROM managed_tags WHERE user_id = ? AND name = ?')
-    .get(userId, normalized) as Record<string, unknown> | undefined;
+  const existing = db.prepare('SELECT * FROM managed_tags WHERE name = ?')
+    .get(normalized) as Record<string, unknown> | undefined;
   if (existing) return rowToManagedTag(existing);
 
   const id = uuid();
   const now = Date.now();
-  db.prepare('INSERT INTO managed_tags (id,user_id,name,created_at) VALUES (?,?,?,?)')
-    .run(id, userId, normalized, now);
-  return { id, userId, name: normalized, createdAt: now };
+  db.prepare('INSERT INTO managed_tags (id,name,created_at) VALUES (?,?,?)')
+    .run(id, normalized, now);
+  return { id, name: normalized, createdAt: now };
 }
 
-export async function deleteManagedTag(userId: string, tagId: string): Promise<boolean> {
-  const row = db.prepare('SELECT * FROM managed_tags WHERE id = ? AND user_id = ?')
-    .get(tagId, userId) as Record<string, unknown> | undefined;
+export async function deleteManagedTag(tagId: string): Promise<boolean> {
+  const row = db.prepare('SELECT * FROM managed_tags WHERE id = ?')
+    .get(tagId) as Record<string, unknown> | undefined;
   if (!row) return false;
   const tagName = row.name as string;
 
-  const result = db.prepare('DELETE FROM managed_tags WHERE id = ? AND user_id = ?').run(tagId, userId);
-  const agents = await getAllAgents(userId);
+  const result = db.prepare('DELETE FROM managed_tags WHERE id = ?').run(tagId);
+  const agents = await getAllAgents(undefined, { includeDeleted: true });
   for (const agent of agents) {
     const tags = (agent.tags || []).filter(t => t !== tagName);
     if (tags.length !== (agent.tags || []).length) {
@@ -477,24 +508,50 @@ export async function deleteManagedAgentType(typeId: string): Promise<boolean> {
 
 // ---- Agents ----
 
-export async function getAllAgents(userId?: string): Promise<AgentConfig[]> {
-  const selectSql = `
-    SELECT a.*, published.version AS published_version
-    FROM agents a
-    LEFT JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
-  `;
+type AgentListOptions = { includeDeleted?: boolean; username?: string };
+type AgentLookupOptions = { includeDeleted?: boolean };
+
+function agentWhereClause(userId?: string, options: AgentListOptions = {}): { sql: string; params: unknown[] } {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
   if (userId) {
-    return db.prepare(`${selectSql} WHERE a.user_id = ? ORDER BY a.updated_at DESC`).all(userId).map((row: unknown) => rowToAgent(row as Record<string, unknown>));
+    conditions.push('a.user_id = ?');
+    params.push(userId);
   }
-  return db.prepare(`${selectSql} ORDER BY a.updated_at DESC`).all().map((row: unknown) => rowToAgent(row as Record<string, unknown>));
+  if (options.username?.trim()) {
+    conditions.push('u.username = ?');
+    params.push(options.username.trim());
+  }
+  if (!options.includeDeleted) {
+    conditions.push('a.deleted_at IS NULL');
+  }
+  return {
+    sql: conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '',
+    params,
+  };
 }
 
-export async function getAgent(id: string): Promise<AgentConfig | undefined> {
-  const row = db.prepare(`
-    SELECT a.*, published.version AS published_version
+export async function getAllAgents(userId?: string, options: AgentListOptions = {}): Promise<AgentConfig[]> {
+  const selectSql = `
+    SELECT a.*, u.username AS owner_username, published.version AS published_version
     FROM agents a
+    JOIN users u ON u.id = a.user_id
+    LEFT JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
+  `;
+  const where = agentWhereClause(userId, options);
+  return db.prepare(`${selectSql}${where.sql} ORDER BY a.updated_at DESC`)
+    .all(...where.params)
+    .map((row: unknown) => rowToAgent(row as Record<string, unknown>));
+}
+
+export async function getAgent(id: string, options: AgentLookupOptions = {}): Promise<AgentConfig | undefined> {
+  const row = db.prepare(`
+    SELECT a.*, u.username AS owner_username, published.version AS published_version
+    FROM agents a
+    JOIN users u ON u.id = a.user_id
     LEFT JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
     WHERE a.id = ?
+      ${options.includeDeleted ? '' : 'AND a.deleted_at IS NULL'}
   `).get(id) as Record<string, unknown> | undefined;
   return row ? rowToAgent(row) : undefined;
 }
@@ -518,8 +575,8 @@ export async function createAgent(userId: string, data: Partial<AgentConfig> & {
     createdAt: now,
     updatedAt: now,
   };
-  const insert = db.prepare(`INSERT INTO agents (id,user_id,name,agent_type,avatar,description,filename,file_size,file_hash,is_public,tags_json,download_count,likes_count,share_token,share_password,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  insert.run(agent.id, agent.userId, agent.name, agent.type, null, agent.description, agent.filename, agent.fileSize, agent.fileHash, agent.isPublic ? 1 : 0, JSON.stringify(agent.tags || []), agent.downloadCount, agent.likesCount, null, null, agent.createdAt, agent.updatedAt);
+  const insert = db.prepare(`INSERT INTO agents (id,user_id,name,agent_type,avatar,description,filename,file_size,file_hash,is_public,tags_json,download_count,likes_count,share_token,share_password,created_at,updated_at,deleted_at,deleted_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  insert.run(agent.id, agent.userId, agent.name, agent.type, null, agent.description, agent.filename, agent.fileSize, agent.fileHash, agent.isPublic ? 1 : 0, JSON.stringify(agent.tags || []), agent.downloadCount, agent.likesCount, null, null, agent.createdAt, agent.updatedAt, null, null);
   return agent;
 }
 
@@ -543,11 +600,10 @@ export async function updateAgent(id: string, data: Partial<AgentConfig>): Promi
   return getAgent(id);
 }
 
-export async function deleteAgent(id: string): Promise<boolean> {
-  const result = db.prepare('DELETE FROM agents WHERE id = ?').run(id);
-  if (result.changes > 0) {
-    await deleteAgentFiles(id);
-  }
+export async function deleteAgent(id: string, deletedBy?: string): Promise<boolean> {
+  const now = Date.now();
+  const result = db.prepare('UPDATE agents SET deleted_at = ?, deleted_by = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL')
+    .run(now, deletedBy || null, now, id);
   return result.changes > 0;
 }
 
@@ -659,14 +715,21 @@ export async function recordImport(agentId: string, sourceType: string, sourceUr
 
 export async function getPublicAgents(): Promise<AgentConfig[]> {
   return db.prepare(`
-    SELECT a.*, published.version AS published_version
+    SELECT a.*, u.username AS owner_username, published.version AS published_version
     FROM agents a
+    JOIN users u ON u.id = a.user_id
     JOIN agent_versions published ON published.agent_id = a.id AND published.is_published = 1
+    WHERE a.deleted_at IS NULL
     ORDER BY a.download_count DESC, a.updated_at DESC
   `).all().map((row: unknown) => rowToAgent(row as Record<string, unknown>));
 }
 
 export async function getAgentByShareToken(token: string): Promise<AgentConfig | undefined> {
-  const row = db.prepare('SELECT * FROM agents WHERE share_token = ?').get(token) as Record<string, unknown> | undefined;
+  const row = db.prepare(`
+    SELECT a.*, u.username AS owner_username
+    FROM agents a
+    JOIN users u ON u.id = a.user_id
+    WHERE a.share_token = ? AND a.deleted_at IS NULL
+  `).get(token) as Record<string, unknown> | undefined;
   return row ? rowToAgent(row) : undefined;
 }

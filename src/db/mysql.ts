@@ -48,12 +48,10 @@ async function init(): Promise<void> {
   await db.query(`
     CREATE TABLE IF NOT EXISTS managed_agent_types (
       id VARCHAR(64) PRIMARY KEY,
-      user_id VARCHAR(64) NOT NULL,
       name VARCHAR(64) NOT NULL,
       backup_dirs_json JSON NOT NULL,
       created_at BIGINT NOT NULL,
-      UNIQUE KEY uniq_managed_agent_types_user_name (user_id, name),
-      CONSTRAINT fk_managed_agent_types_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      UNIQUE KEY uniq_managed_agent_types_name (name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
@@ -125,6 +123,34 @@ async function ensureMysqlColumn(db: Pool, table: string, column: string, defini
   await db.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
+async function migrateGlobalAgentTypes(db: Pool): Promise<void> {
+  if (!await mysqlColumnExists(db, 'managed_agent_types', 'user_id')) return;
+
+  await db.query('DROP TABLE IF EXISTS managed_agent_types_global');
+  await db.query(`
+    CREATE TABLE managed_agent_types_global (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(64) NOT NULL,
+      backup_dirs_json JSON NOT NULL,
+      created_at BIGINT NOT NULL,
+      UNIQUE KEY uniq_managed_agent_types_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  const [rows] = await db.execute<ManagedAgentTypeRow[]>(
+    'SELECT id, name, backup_dirs_json, created_at FROM managed_agent_types ORDER BY created_at ASC, id ASC'
+  );
+  for (const row of rows) {
+    await db.execute(
+      'INSERT IGNORE INTO managed_agent_types_global (id, name, backup_dirs_json, created_at) VALUES (?,?,?,?)',
+      [row.id, row.name, JSON.stringify(parseJson<string[]>(row.backup_dirs_json, [])), row.created_at]
+    );
+  }
+
+  await db.query('DROP TABLE managed_agent_types');
+  await db.query('RENAME TABLE managed_agent_types_global TO managed_agent_types');
+}
+
 async function migrateSchema(db: Pool): Promise<void> {
   await ensureMysqlColumn(db, 'users', 'login_key_hash', 'TEXT');
   await ensureMysqlColumn(db, 'users', 'upload_key_hash', 'TEXT');
@@ -169,21 +195,25 @@ async function migrateSchema(db: Pool): Promise<void> {
     `);
   }
 
+  await migrateGlobalAgentTypes(db);
+
   await db.query(`
-    UPDATE managed_agent_types mat
-    LEFT JOIN managed_agent_types existing
-      ON existing.user_id = mat.user_id AND existing.name = 'currentdir'
-    SET mat.name = 'currentdir'
-    WHERE mat.name = 'workspace'
-      AND existing.id IS NULL
+    UPDATE managed_agent_types
+    SET name = 'currentdir'
+    WHERE name = 'workspace'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM (SELECT id FROM managed_agent_types WHERE name = 'currentdir') existing
+      )
   `);
   await db.query("UPDATE agents SET agent_type = 'currentdir' WHERE agent_type = 'workspace'");
   await db.query(`
-    DELETE mat
-    FROM managed_agent_types mat
-    JOIN managed_agent_types existing
-      ON existing.user_id = mat.user_id AND existing.name = 'currentdir'
-    WHERE mat.name = 'workspace'
+    DELETE FROM managed_agent_types
+    WHERE name = 'workspace'
+      AND EXISTS (
+        SELECT 1
+        FROM (SELECT id FROM managed_agent_types WHERE name = 'currentdir') existing
+      )
   `);
 
   await db.execute(
@@ -263,7 +293,7 @@ type ManagedTagRow = RowDataPacket & {
 };
 
 type ManagedAgentTypeRow = RowDataPacket & {
-  id: string; user_id: string; name: string; backup_dirs_json: string; created_at: number;
+  id: string; name: string; backup_dirs_json: string; created_at: number;
 };
 
 type VersionRow = RowDataPacket & {
@@ -311,7 +341,6 @@ function toVersion(row: VersionRow): AgentVersion {
 function toManagedAgentType(row: ManagedAgentTypeRow): ManagedAgentType {
   return {
     id: row.id,
-    userId: row.user_id,
     name: row.name,
     backupDirs: parseJson<string[]>(row.backup_dirs_json, []),
     createdAt: Number(row.created_at),
@@ -332,13 +361,13 @@ function normalizeBackupDirs(value: string[]): string[] {
   return [...new Set(value.map(dir => String(dir).trim()).filter(Boolean))];
 }
 
-async function seedDefaultAgentTypes(userId: string): Promise<void> {
+async function seedDefaultAgentTypes(): Promise<void> {
   const db = requirePool();
   const now = Date.now();
   for (const type of defaultAgentTypes) {
     await db.execute(
-      'INSERT IGNORE INTO managed_agent_types (id, user_id, name, backup_dirs_json, created_at) VALUES (?,?,?,?,?)',
-      [uuid(), userId, type.name, JSON.stringify(type.backupDirs), now]
+      'INSERT IGNORE INTO managed_agent_types (id, name, backup_dirs_json, created_at) VALUES (?,?,?,?)',
+      [uuid(), type.name, JSON.stringify(type.backupDirs), now]
     );
   }
 }
@@ -540,42 +569,35 @@ export async function deleteManagedTag(userId: string, tagId: string): Promise<b
 
 // ---- Managed Agent Types ----
 
-export async function getManagedAgentTypes(userId: string): Promise<ManagedAgentType[]> {
+export async function getManagedAgentTypes(): Promise<ManagedAgentType[]> {
   await ensureReady();
   const db = requirePool();
-  let [rows] = await db.execute<ManagedAgentTypeRow[]>(
-    'SELECT * FROM managed_agent_types WHERE user_id = ? ORDER BY created_at ASC',
-    [userId]
+  await seedDefaultAgentTypes();
+  const [rows] = await db.execute<ManagedAgentTypeRow[]>(
+    'SELECT * FROM managed_agent_types ORDER BY created_at ASC'
   );
-  if (!rows.length) {
-    await seedDefaultAgentTypes(userId);
-    [rows] = await db.execute<ManagedAgentTypeRow[]>(
-      'SELECT * FROM managed_agent_types WHERE user_id = ? ORDER BY created_at ASC',
-      [userId]
-    );
-  }
   return rows.map(toManagedAgentType);
 }
 
-export async function createManagedAgentType(userId: string, name: string, backupDirs: string[]): Promise<ManagedAgentType> {
+export async function createManagedAgentType(name: string, backupDirs: string[]): Promise<ManagedAgentType> {
   await ensureReady();
   const db = requirePool();
   const id = uuid();
   const now = Date.now();
   const dirs = normalizeBackupDirs(backupDirs);
   await db.execute(
-    'INSERT INTO managed_agent_types (id,user_id,name,backup_dirs_json,created_at) VALUES (?,?,?,?,?)',
-    [id, userId, name, JSON.stringify(dirs), now]
+    'INSERT INTO managed_agent_types (id,name,backup_dirs_json,created_at) VALUES (?,?,?,?)',
+    [id, name, JSON.stringify(dirs), now]
   );
-  return { id, userId, name, backupDirs: dirs, createdAt: now };
+  return { id, name, backupDirs: dirs, createdAt: now };
 }
 
-export async function updateManagedAgentType(userId: string, typeId: string, input: { name?: string; backupDirs?: string[] }): Promise<ManagedAgentType | undefined> {
+export async function updateManagedAgentType(typeId: string, input: { name?: string; backupDirs?: string[] }): Promise<ManagedAgentType | undefined> {
   await ensureReady();
   const db = requirePool();
   const [rows] = await db.execute<ManagedAgentTypeRow[]>(
-    'SELECT * FROM managed_agent_types WHERE id = ? AND user_id = ?',
-    [typeId, userId]
+    'SELECT * FROM managed_agent_types WHERE id = ?',
+    [typeId]
   );
   const existing = rows[0];
   if (!existing) return undefined;
@@ -583,38 +605,38 @@ export async function updateManagedAgentType(userId: string, typeId: string, inp
   const nextName = input.name ?? existing.name;
   const nextDirs = input.backupDirs ? normalizeBackupDirs(input.backupDirs) : parseJson<string[]>(existing.backup_dirs_json, []);
   await db.execute(
-    'UPDATE managed_agent_types SET name = ?, backup_dirs_json = ? WHERE id = ? AND user_id = ?',
-    [nextName, JSON.stringify(nextDirs), typeId, userId]
+    'UPDATE managed_agent_types SET name = ?, backup_dirs_json = ? WHERE id = ?',
+    [nextName, JSON.stringify(nextDirs), typeId]
   );
 
   if (input.name && input.name !== existing.name) {
     await db.execute(
-      'UPDATE agents SET agent_type = ?, updated_at = ? WHERE user_id = ? AND agent_type = ?',
-      [input.name, Date.now(), userId, existing.name]
+      'UPDATE agents SET agent_type = ?, updated_at = ? WHERE agent_type = ?',
+      [input.name, Date.now(), existing.name]
     );
   }
 
-  return { id: typeId, userId, name: nextName, backupDirs: nextDirs, createdAt: Number(existing.created_at) };
+  return { id: typeId, name: nextName, backupDirs: nextDirs, createdAt: Number(existing.created_at) };
 }
 
-export async function deleteManagedAgentType(userId: string, typeId: string): Promise<boolean> {
+export async function deleteManagedAgentType(typeId: string): Promise<boolean> {
   await ensureReady();
   const db = requirePool();
   const [rows] = await db.execute<ManagedAgentTypeRow[]>(
-    'SELECT * FROM managed_agent_types WHERE id = ? AND user_id = ?',
-    [typeId, userId]
+    'SELECT * FROM managed_agent_types WHERE id = ?',
+    [typeId]
   );
   const type = rows[0];
   if (!type) return false;
 
   const [result] = await db.execute<ResultSetHeader>(
-    'DELETE FROM managed_agent_types WHERE id = ? AND user_id = ?',
-    [typeId, userId]
+    'DELETE FROM managed_agent_types WHERE id = ?',
+    [typeId]
   );
   if (result.affectedRows > 0) {
     await db.execute(
-      'UPDATE agents SET agent_type = ?, updated_at = ? WHERE user_id = ? AND agent_type = ?',
-      ['currentdir', Date.now(), userId, type.name]
+      'UPDATE agents SET agent_type = ?, updated_at = ? WHERE agent_type = ?',
+      ['currentdir', Date.now(), type.name]
     );
   }
   return result.affectedRows > 0;

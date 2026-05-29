@@ -7,10 +7,10 @@ import { state, createAgentForm, resetAgentForm } from './state.js';
 
 let loginMode = 'login'; // 'login' | 'register'
 let registeredKey = ''; // shown after successful registration
-const USERNAME_PATTERN = /^[a-z0-9]{8,20}$/;
-const USERNAME_RULE_MESSAGE = 'Username must be 8-20 characters and contain only lowercase letters and numbers.';
-const AGENT_NAME_PATTERN = /^[a-z0-9-]{4,20}$/;
-const AGENT_NAME_RULE_MESSAGE = 'Agent name must be 4-20 characters and contain only lowercase letters, numbers, and hyphens.';
+const USERNAME_PATTERN = /^[a-z0-9]{8,30}$/;
+const USERNAME_RULE_MESSAGE = 'Username must be 8-30 characters and contain only lowercase letters and numbers.';
+const AGENT_NAME_PATTERN = /^[a-z0-9-]{8,30}$/;
+const AGENT_NAME_RULE_MESSAGE = 'Agent name must be 8-30 characters and contain only lowercase letters, numbers, and hyphens.';
 
 function renderAdminLogin(message = '') {
   const isRegister = loginMode === 'register';
@@ -27,10 +27,10 @@ function renderAdminLogin(message = '') {
       </div>
       ` : ''}
       ${isRegister ? `
-      <input type="text" id="adminUsername" placeholder="8-20 lowercase letters or numbers"
-        minlength="8" maxlength="20" pattern="[a-z0-9]{8,20}" autocomplete="username"
+      <input type="text" id="adminUsername" placeholder="8-30 lowercase letters or numbers"
+        minlength="8" maxlength="30" pattern="[a-z0-9]{8,30}" autocomplete="username"
         onkeydown="if(event.key==='Enter')submitAdminRegister()">
-      <p class="text-muted" style="margin:-0.35rem 0 0.75rem;font-size:0.78rem">8-20 characters, lowercase letters and numbers only.</p>
+      <p class="text-muted" style="margin:-0.35rem 0 0.75rem;font-size:0.78rem">8-30 characters, lowercase letters and numbers only.</p>
       <button class="btn-primary" style="width:100%;margin-bottom:0.5rem" onclick="submitAdminRegister()">Create Account</button>
       <button class="btn-ghost" style="width:100%" onclick="switchLoginMode('login')">Back to sign in</button>
       ` : `
@@ -433,7 +433,7 @@ async function renderAdminDashboard() {
       </div>
     </div>
     ${renderAdminTabs(agents, isSystemAdmin)}
-    ${renderAdminPanel(agents)}
+    ${renderAdminPanel(agents, isSystemAdmin)}
   `);
 }
 
@@ -456,8 +456,8 @@ function renderAdminTabs(agents, isSystemAdmin = false) {
   `;
 }
 
-function renderAdminPanel(agents) {
-  if (state.adminTab === 'types') return renderTypeManager();
+function renderAdminPanel(agents, isSystemAdmin = false) {
+  if (state.adminTab === 'types') return renderTypeManager(isSystemAdmin);
   if (state.adminTab === 'users') return renderUserManager();
   return renderAgentsAdminPanel(agents);
 }
@@ -634,14 +634,14 @@ function parseDirsText(value) {
   return String(value || '').split(/\r?\n|,/).map(dir => dir.trim()).filter(Boolean);
 }
 
-function renderTypeManager() {
+function renderTypeManager(isSystemAdmin = false) {
   const types = state.typeOptions || [];
   return `
-    <div class="card" style="margin-bottom:1rem">
+    ${isSystemAdmin ? `<div class="card" style="margin-bottom:1rem">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
         <div>
-          <h3 style="margin:0">Types</h3>
-          <p class="text-muted" style="margin:0.25rem 0 0;font-size:0.85rem">Each type can define one or more directories for CLI backup.</p>
+          <h3 style="margin:0">Global Types</h3>
+          <p class="text-muted" style="margin:0.25rem 0 0;font-size:0.85rem">Global types are available to every user. Each type defines one or more directories for CLI backup.</p>
         </div>
         <div style="display:grid;gap:0.45rem;min-width:280px">
           <input id="new-type-name" placeholder="Type name, e.g. cursor"
@@ -651,7 +651,11 @@ function renderTypeManager() {
           <button class="btn-primary" onclick="addManagedType()">Add Type</button>
         </div>
       </div>
-    </div>
+    </div>` : `
+    <div class="card" style="margin-bottom:1rem">
+      <h3 style="margin:0">Global Types</h3>
+      <p class="text-muted" style="margin:0.25rem 0 0;font-size:0.85rem">These types are managed by the admin user and are available to everyone.</p>
+    </div>`}
     <div class="card admin-table-card">
       ${types.length ? `
         <div class="admin-table-wrap">
@@ -672,12 +676,12 @@ function renderTypeManager() {
                       ? (type.backupDirs || []).map(dir => `<code style="display:inline-block;margin:0.12rem 0.25rem 0.12rem 0;padding:0.15rem 0.35rem;background:#f1f5f9;border-radius:6px">${escapeHtml(dir)}</code>`).join('')
                       : '<span class="text-muted">-</span>'}
                   </td>
-                  <td>
+                  ${isSystemAdmin ? `<td>
                     <div class="agent-actions">
                       <button class="btn-ghost" onclick="editManagedType('${type.id}')">Edit</button>
                       <button class="btn-ghost btn-danger" onclick="deleteManagedType('${type.id}')">Delete</button>
                     </div>
-                  </td>
+                  </td>` : '<td><span class="text-muted">Managed globally</span></td>'}
                 </tr>
               `).join('')}
             </tbody>
@@ -903,8 +907,8 @@ function renderAgentForm() {
       <div class="form-group">
         <label class="field">
           <span class="field-label">Name<span class="field-required">*</span></span>
-          <input data-agent-field="name" placeholder="e.g. my-agent" value="${escapeHtml(f.name)}" minlength="4" maxlength="20" pattern="[a-z0-9-]{4,20}" oninput="updateAgentFormField('name', this.value)">
-          <span class="text-muted" style="font-size:0.75rem">4-20 characters, lowercase letters, numbers, and hyphens only. Names must be unique in your account.</span>
+          <input data-agent-field="name" placeholder="e.g. my-agent" value="${escapeHtml(f.name)}" minlength="8" maxlength="30" pattern="[a-z0-9-]{8,30}" oninput="updateAgentFormField('name', this.value)">
+          <span class="text-muted" style="font-size:0.75rem">8-30 characters, lowercase letters, numbers, and hyphens only. Names must be unique in your account.</span>
         </label>
         <label class="field">
           <span class="field-label">Type<span class="field-required">*</span></span>

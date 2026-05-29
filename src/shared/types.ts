@@ -57,7 +57,6 @@ export interface ManagedTag {
 
 export interface ManagedAgentType {
   id: string;
-  userId: string;
   name: string;
   backupDirs: string[];
   createdAt: number;

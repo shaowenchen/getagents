@@ -8,8 +8,8 @@ import * as db from '../db/store.js';
 
 const uploadTempDir = join(tmpdir(), 'getagents-uploads');
 const maxUploadSize = Number(process.env.MAX_UPLOAD_MB || 500) * 1024 * 1024;
-const AGENT_NAME_PATTERN = /^[a-z0-9-]{4,20}$/;
-const AGENT_NAME_RULE_MESSAGE = 'name must be 4-20 characters and contain only lowercase letters, numbers, and hyphens';
+const AGENT_NAME_PATTERN = /^[a-z0-9-]{8,30}$/;
+const AGENT_NAME_RULE_MESSAGE = 'name must be 8-30 characters and contain only lowercase letters, numbers, and hyphens';
 
 function parseTagInput(value: unknown): string[] | undefined {
   if (value === undefined || value === null || value === '') return undefined;
@@ -64,7 +64,7 @@ export async function validateManagedTags(userId: string, value: unknown): Promi
 
 export async function validateAgentType(userId: string, value: unknown): Promise<string> {
   const type = String(value || 'currentdir').trim();
-  const allowed = new Set((await db.getManagedAgentTypes(userId)).map((item) => item.name));
+  const allowed = new Set((await db.getManagedAgentTypes()).map((item) => item.name));
   if (!allowed.has(type)) throw new Error(`Unknown type: ${type}`);
   return type;
 }

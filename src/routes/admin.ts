@@ -22,8 +22,8 @@ import { generateUserKey, generateUserKeys, hashUserKeys, type UserKeyKind } fro
 const log = createLogger('admin-route');
 const router = Router();
 const DEFAULT_EXTRA_ADMIN_API_KEY = 'user-adminAPIKeyChangeMe0000000000000';
-const USERNAME_PATTERN = /^[a-z0-9]{8,20}$/;
-const USERNAME_RULE_MESSAGE = 'username must be 8-20 characters and contain only lowercase letters and numbers';
+const USERNAME_PATTERN = /^[a-z0-9]{8,30}$/;
+const USERNAME_RULE_MESSAGE = 'username must be 8-30 characters and contain only lowercase letters and numbers';
 
 function parseBackupDirs(value: unknown): string[] {
   if (Array.isArray(value)) return [...new Set(value.map((dir) => String(dir).trim()).filter(Boolean))];
@@ -131,13 +131,13 @@ router.delete('/tags/:id', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 router.get('/types', requireAuth, asyncHandler(async (req, res) => {
-  const userId = (req as any).userId;
-  const types = await getManagedAgentTypes(userId);
+  const types = await getManagedAgentTypes();
   res.json(types);
 }));
 
 router.post('/types', requireAuth, asyncHandler(async (req, res) => {
-  const userId = (req as any).userId;
+  if (!await requireSystemAdmin(req, res)) return;
+
   const name = String(req.body?.name || '').trim();
   const backupDirs = parseBackupDirs(req.body?.backupDirs);
   if (!name) return res.status(400).json({ error: 'name is required' });
@@ -145,12 +145,13 @@ router.post('/types', requireAuth, asyncHandler(async (req, res) => {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) return res.status(400).json({ error: 'type name can only contain letters, numbers, underscores, and dashes' });
   if (!backupDirs.length) return res.status(400).json({ error: 'at least one backup directory is required' });
 
-  const type = await createManagedAgentType(userId, name, backupDirs);
+  const type = await createManagedAgentType(name, backupDirs);
   res.status(201).json(type);
 }));
 
 router.put('/types/:id', requireAuth, asyncHandler(async (req, res) => {
-  const userId = (req as any).userId;
+  if (!await requireSystemAdmin(req, res)) return;
+
   const name = req.body?.name === undefined ? undefined : String(req.body.name || '').trim();
   const backupDirs = req.body?.backupDirs === undefined ? undefined : parseBackupDirs(req.body.backupDirs);
   if (name !== undefined && !name) return res.status(400).json({ error: 'name is required' });
@@ -158,14 +159,15 @@ router.put('/types/:id', requireAuth, asyncHandler(async (req, res) => {
   if (name !== undefined && !/^[a-zA-Z0-9_-]+$/.test(name)) return res.status(400).json({ error: 'type name can only contain letters, numbers, underscores, and dashes' });
   if (backupDirs !== undefined && !backupDirs.length) return res.status(400).json({ error: 'at least one backup directory is required' });
 
-  const type = await updateManagedAgentType(userId, req.params.id, { name, backupDirs });
+  const type = await updateManagedAgentType(req.params.id, { name, backupDirs });
   if (!type) return res.status(404).json({ error: 'Type not found' });
   res.json(type);
 }));
 
 router.delete('/types/:id', requireAuth, asyncHandler(async (req, res) => {
-  const userId = (req as any).userId;
-  if (!await deleteManagedAgentType(userId, req.params.id)) {
+  if (!await requireSystemAdmin(req, res)) return;
+
+  if (!await deleteManagedAgentType(req.params.id)) {
     return res.status(404).json({ error: 'Type not found' });
   }
   res.status(204).end();

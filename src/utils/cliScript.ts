@@ -269,10 +269,17 @@ try_direct_upload() {
   [[ -n "\$upload_url" && -n "\$direct_key" ]] || return 1
 
   info "Direct uploading to object storage ..."
-  curl -fsSL -X PUT -H "Content-Type: application/zip" --upload-file "\$ZIP_PATH" "\$upload_url" >/dev/null || return 1
+  if ! curl -fsSL -X PUT --upload-file "\$ZIP_PATH" "\$upload_url" >/dev/null 2>&1; then
+    err "Direct object storage upload failed (check presigned URL / storage permissions)"
+    return 1
+  fi
 
+  info "Finalizing direct upload ..."
   complete_payload="\$(json_payload "\$AGENT_ID" "\$AGENT_NAME" "\$AGENT_TYPE" "\$DESCRIPTION" "\$TAGS" "\$COMMENT" "\$filename" "\$SIZE_BYTES" "\$FILE_HASH" "\$direct_key")"
-  RESPONSE="\$(curl -fsSL -X POST -H "X-API-Key: \$API_KEY" -H "Content-Type: application/json" --data "\$complete_payload" "\$complete_url")" || return 1
+  if ! RESPONSE="\$(curl -fsSL -X POST -H "X-API-Key: \$API_KEY" -H "Content-Type: application/json" --data "\$complete_payload" "\$complete_url" 2>&1)"; then
+    err "Direct upload finalize failed: \$RESPONSE"
+    return 1
+  fi
   echo "\$RESPONSE"
   info "Done."
   return 0

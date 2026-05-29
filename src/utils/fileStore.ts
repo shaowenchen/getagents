@@ -7,10 +7,10 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { mkdirSync, existsSync, copyFileSync, rmSync, createReadStream, createWriteStream } from 'fs';
-import { readdir, stat } from 'fs/promises';
+import { readdir, stat, unlink } from 'fs/promises';
 import { Readable } from 'stream';
 import { finished, pipeline } from 'stream/promises';
 import crypto from 'crypto';
@@ -321,6 +321,14 @@ function supportsDirectAgentUpload(): boolean {
   return STORAGE_DRIVER === 's3';
 }
 
+const S3_PRESIGN_UNSIGNABLE_HEADERS = new Set([
+  'x-amz-checksum-crc32',
+  'x-amz-checksum-crc32c',
+  'x-amz-checksum-sha1',
+  'x-amz-checksum-sha256',
+  'x-amz-sdk-checksum-algorithm',
+]);
+
 async function createDirectAgentUpload(userId: string, fileName = 'agent.zip'): Promise<{ key: string; url: string; headers: Record<string, string>; expiresIn: number }> {
   if (!supportsDirectAgentUpload()) throw new Error('Direct upload is only supported for S3 storage');
 
@@ -330,20 +338,42 @@ async function createDirectAgentUpload(userId: string, fileName = 'agent.zip'): 
   const command = new PutObjectCommand({
     Bucket: S3_BUCKET,
     Key: key,
-    ContentType: 'application/zip',
   });
   const expiresIn = Number(process.env.S3_DIRECT_UPLOAD_EXPIRES_SECONDS || 900);
-  const url = await getSignedUrl(s3, command, { expiresIn });
-  return { key, url, headers: { 'Content-Type': 'application/zip' }, expiresIn };
+  const url = await getSignedUrl(s3, command, {
+    expiresIn,
+    unsignableHeaders: S3_PRESIGN_UNSIGNABLE_HEADERS,
+  });
+  return { key, url, headers: {}, expiresIn };
+}
+
+async function downloadS3ObjectToPath(key: string, destPath: string): Promise<void> {
+  const result = await s3.send(new GetObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: key,
+  }));
+  const body = bodyToStream(result.Body);
+  if (!body) throw new Error(`Direct upload object not found: ${key}`);
+  await pipeline(body, createWriteStream(destPath));
 }
 
 async function commitDirectAgentUpload(userId: string, sourceKey: string, agentId: string, version: number): Promise<void> {
   if (!supportsDirectAgentUpload()) throw new Error('Direct upload is only supported for S3 storage');
   assertDirectUploadKey(userId, sourceKey);
 
-  await copyS3Object(sourceKey, s3UploadKey(agentId, versionFileName(version)));
-  await copyS3Object(sourceKey, s3DownloadKey(agentId, 'current.zip'));
-  await deleteS3Object(sourceKey);
+  const tmpPath = join(tmpdir(), `getagents-direct-${crypto.randomUUID()}.zip`);
+  try {
+    try {
+      await copyS3Object(sourceKey, s3UploadKey(agentId, versionFileName(version)));
+      await copyS3Object(sourceKey, s3DownloadKey(agentId, 'current.zip'));
+    } catch {
+      await downloadS3ObjectToPath(sourceKey, tmpPath);
+      await saveS3AgentFileFromPath(agentId, version, tmpPath);
+    }
+    await deleteS3Object(sourceKey);
+  } finally {
+    await unlink(tmpPath).catch(() => undefined);
+  }
 }
 
 function getAgentFilePath(agentId: string, version?: number): string {

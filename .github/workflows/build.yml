@@ -9,7 +9,7 @@ on:
       platforms:
         description: "Comma-separated platforms, e.g. linux/amd64,linux/arm64"
         required: false
-        default: "linux/amd64,linux/arm64"
+        default: "linux/amd64"
 
 jobs:
   build:
@@ -50,7 +50,7 @@ jobs:
         with:
           context: .
           push: true
-          platforms: ${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64' }}
+          platforms: ${{ github.event.inputs.platforms || 'linux/amd64' }}
           tags: |
             ${{ steps.image.outputs.dockerhub }}
             ${{ steps.image.outputs.acr }}

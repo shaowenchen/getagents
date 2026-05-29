@@ -33,7 +33,6 @@ async function renderAgentDetail(agentId) {
             </div>
             <p style="color:var(--muted);line-height:1.5">${escapeHtml(agent.description || 'No description')}</p>
             <div class="agent-meta" style="margin-top:0.5rem">
-              <span class="agent-chip">File: ${escapeHtml(truncate(agent.filename || 'N/A', 50))}</span>
               <span class="agent-chip">Type: ${escapeHtml(agentTypeLabel(agent.type))}</span>
               <span class="agent-chip">Size: ${formatFileSize(agent.fileSize || 0)}</span>
               <span class="agent-chip">SHA-256: ${escapeHtml(truncate(agent.fileHash || '', 16))}</span>

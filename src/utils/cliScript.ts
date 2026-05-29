@@ -183,19 +183,34 @@ if command -v zip >/dev/null 2>&1; then
   fi
 elif command -v python3 >/dev/null 2>&1; then
   python3 - "\$ZIP_PATH" "\${EXPANDED_SOURCE_DIRS[@]}" <<'PYEOF'
-import os, sys, zipfile
+import os, stat, sys, zipfile
 
 dst, sources = sys.argv[1], sys.argv[2:]
 skip = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', '.cache'}
+def regular_dir(path):
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
 with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zf:
     for src in sources:
         root_prefix = os.path.basename(os.path.abspath(src)) if len(sources) > 1 else ''
         for root, dirs, files in os.walk(src):
-            dirs[:] = [d for d in dirs if d not in skip]
+            dirs[:] = [
+                d for d in dirs
+                if d not in skip and regular_dir(os.path.join(root, d))
+            ]
             for f in files:
                 if f == '.DS_Store' or f.endswith('.log'):
                     continue
                 full = os.path.join(root, f)
+                try:
+                    mode = os.lstat(full).st_mode
+                except OSError:
+                    continue
+                if not stat.S_ISREG(mode):
+                    continue
                 rel = os.path.relpath(full, src)
                 arcname = os.path.join(root_prefix, rel) if root_prefix else rel
                 zf.write(full, arcname)

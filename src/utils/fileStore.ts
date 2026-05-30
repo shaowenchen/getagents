@@ -196,7 +196,7 @@ function versionFileName(version: number): string {
 }
 
 function agentFilePath(agentId: string, version: number): string {
-  return `/${agentId}/file-${version}.zip`;
+  return `/${agentId}/file-v${version}.zip`;
 }
 
 function normalizeStoredFilePath(filePath: string): string {
@@ -508,7 +508,7 @@ async function copyS3AgentFiles(fromAgentId: string, toAgentId: string): Promise
   for (const key of keys) {
     const fileName = key.split('/').filter(Boolean).at(-1);
     if (!fileName) continue;
-    const versionMatch = fileName.match(/^(?:v|file-)(\d+)\.zip$/);
+    const versionMatch = fileName.match(/^(?:v|file-v?)(\d+)\.zip$/);
     if (!versionMatch) continue;
     const targetKey = s3StoredFileKey(agentFilePath(toAgentId, Number(versionMatch[1])));
     await s3.send(new CopyObjectCommand({

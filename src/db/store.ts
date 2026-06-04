@@ -1,7 +1,7 @@
 import * as mysqlStore from './mysql.js';
 import * as sqliteStore from './sqlite.js';
 
-const store = process.env.SQL_DSN ? mysqlStore : sqliteStore;
+const store = (process.env.SQL_DSN || '').startsWith('mysql://') ? mysqlStore : sqliteStore;
 
 // Users
 export const createUser = store.createUser;

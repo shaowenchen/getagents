@@ -5,7 +5,17 @@ import { mkdirSync } from 'fs';
 import { v4 as uuid } from 'uuid';
 import type { AgentConfig, AgentVersion, AgentSnapshot, ManagedAgentType, ManagedTag, User } from '../shared/types.js';
 
-const databasePath = `${homedir()}/.getagents/getagents.sqlite`;
+function getDatabasePath(): string {
+  const dsn = (process.env.SQL_DSN || '').trim();
+  if (!dsn) return `${homedir()}/.getagents/getagents.sqlite`;
+  if (dsn.startsWith('sqlite:')) {
+    let path = dsn.slice('sqlite:'.length).replace(/^\/+/, '/');
+    return path || `${homedir()}/.getagents/getagents.sqlite`;
+  }
+  return `${homedir()}/.getagents/getagents.sqlite`;
+}
+
+const databasePath = getDatabasePath();
 
 mkdirSync(dirname(databasePath), { recursive: true });
 

@@ -60,13 +60,26 @@ Usernames must be 8-30 characters and contain only lowercase letters and numbers
 
 GetAgents supports:
 
-- SQLite by default, when `SQL_DSN` is empty.
-- MySQL when `SQL_DSN` is set.
+- SQLite by default, when `SQL_DSN` is empty or starts with `sqlite:`.
+- MySQL when `SQL_DSN` starts with `mysql://`.
 
 SQLite data is stored at:
 
 ```text
 ~/.getagents/getagents.sqlite
+```
+
+SQLite DSN examples:
+
+```env
+# Default path (~/.getagents/getagents.sqlite)
+SQL_DSN=
+
+# Absolute path
+SQL_DSN=sqlite:////data/getagents.sqlite
+
+# Relative path (relative to working directory)
+SQL_DSN=sqlite:./data/getagents.sqlite
 ```
 
 MySQL DSN example:

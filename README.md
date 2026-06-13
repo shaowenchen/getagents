@@ -169,6 +169,8 @@ AWS_BUCKET_URI=s3://getagents/agents
 AWS_S3_FORCE_PATH_STYLE=
 AWS_S3_REQUEST_CHECKSUM_CALCULATION=WHEN_REQUIRED
 S3_DIRECT_UPLOAD_EXPIRES_SECONDS=900
+# Presigned URL lifetime for direct CLI downloads, in seconds. Defaults to S3_DIRECT_UPLOAD_EXPIRES_SECONDS.
+S3_DIRECT_DOWNLOAD_EXPIRES_SECONDS=900
 ```
 
 Stored object keys use the database `filePath` value under the configured key prefix:
@@ -229,11 +231,28 @@ The CLI packages regular files from the selected source directories. It does not
 
 Private downloads require the Download API Key, either via `X-API-Key`, `Authorization: ApiKey <key>`, or the `downloadKey` query parameter used by the web UI. Published marketplace versions can be downloaded publicly without a key.
 
+When `STORAGE_DRIVER=s3`, download requests are redirected to a presigned object-storage URL so packages are fetched directly from storage instead of relaying through GetAgents.
+
 Downloaded ZIP filenames are generated from the agent name and version, for example:
 
 ```text
 my-agent1-v2.zip
 ```
+
+### CLI Download
+
+Example:
+
+```bash
+GETAGENTS_DOWNLOAD_API_KEY=user-xxx bash <(curl -fsSL http://localhost:3000/getagents/cli/download.sh) \
+  --agent-id 1a2b3c4d-... \
+  --version 2 \
+  --output my-agent1-v2.zip
+```
+
+`GETAGENTS_DOWNLOAD_API_KEY` must be the Download API Key. Published marketplace versions can omit the key when downloading the published release.
+
+The CLI first asks GetAgents for a download URL. When S3 storage is enabled, it downloads directly from object storage. Otherwise it falls back to the GetAgents relay download endpoint.
 
 ## Kubernetes Deployment
 

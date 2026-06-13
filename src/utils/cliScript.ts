@@ -22,8 +22,6 @@ export const UPLOAD_SCRIPT_TEMPLATE = `#!/usr/bin/env bash
 #   GETAGENTS_TYPE       Agent type metadata
 #   GETAGENTS_SOURCE     Directory to upload (repeat --source for multiple dirs)
 
-set -euo pipefail
-
 ENDPOINT="\${GETAGENTS_ENDPOINT:-\${ACCESS_URL:-__ENDPOINT__}}"
 API_KEY="\${GETAGENTS_API_KEY:-}"
 AGENT_TYPE="\${GETAGENTS_TYPE:-currentdir}"
@@ -341,4 +339,158 @@ fi
 
 export function renderUploadScript(endpoint: string): string {
   return UPLOAD_SCRIPT_TEMPLATE.replaceAll('__ENDPOINT__', endpoint);
+}
+
+export const DOWNLOAD_SCRIPT_TEMPLATE = `#!/usr/bin/env bash
+# getagents-download — Download an agent package from a GetAgents server.
+#
+# Quick start:
+#   curl -fsSL __ENDPOINT__/cli/download.sh | \\
+#     GETAGENTS_DOWNLOAD_API_KEY=user-XXX bash -s -- --agent-id <id>
+#
+# Or download once and reuse:
+#   curl -fsSL __ENDPOINT__/cli/download.sh -o download.sh
+#   GETAGENTS_DOWNLOAD_API_KEY=user-XXX bash download.sh --agent-id <id> --version 2
+#
+# Environment variables (all overridable by flags):
+#   GETAGENTS_ENDPOINT           Server base URL (overrides ACCESS_URL)
+#   ACCESS_URL                   Public GetAgents app URL used as the default endpoint
+#   GETAGENTS_DOWNLOAD_API_KEY   Download API key from the GetAgents profile page
+
+ENDPOINT="\${GETAGENTS_ENDPOINT:-\${ACCESS_URL:-__ENDPOINT__}}"
+API_KEY="\${GETAGENTS_DOWNLOAD_API_KEY:-}"
+AGENT_ID=""
+VERSION=""
+OUTPUT=""
+
+usage() {
+  cat <<EOF
+Usage: bash download.sh [options]
+
+  -e, --endpoint URL       Server base URL (env GETAGENTS_ENDPOINT)
+  -k, --api-key KEY        Download API key (env GETAGENTS_DOWNLOAD_API_KEY)
+  -i, --agent-id ID        Agent ID to download (required)
+  -v, --version N          Version number (default: latest)
+  -o, --output PATH        Output ZIP path (default: <agent-name>-v<N>.zip)
+  -h, --help               Show this help
+
+Examples:
+  # Download latest version
+  bash download.sh --agent-id 1a2b3c-...
+
+  # Download a specific version
+  bash download.sh --agent-id 1a2b3c-... --version 2 -o my-agent-v2.zip
+
+Published marketplace versions can be downloaded without an API key when the
+requested version matches the published release.
+
+EOF
+}
+
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    -e|--endpoint)     ENDPOINT="\${2:-}"; shift 2 ;;
+    -k|--api-key)      API_KEY="\${2:-}"; shift 2 ;;
+    -i|--agent-id)     AGENT_ID="\${2:-}"; shift 2 ;;
+    -v|--version)      VERSION="\${2:-}"; shift 2 ;;
+    -o|--output)       OUTPUT="\${2:-}"; shift 2 ;;
+    -h|--help)         usage; exit 0 ;;
+    *)                 echo "Unknown option: \$1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+err() { echo "[getagents] \$*" >&2; }
+info() { echo "[getagents] \$*"; }
+
+[[ -z "\$ENDPOINT" ]] && { err "ENDPOINT is empty (set GETAGENTS_ENDPOINT or pass --endpoint)"; exit 2; }
+[[ -z "\$AGENT_ID" ]] && { err "Agent ID is required (pass --agent-id)"; exit 2; }
+
+command -v curl >/dev/null 2>&1 || { err "curl is required"; exit 127; }
+
+json_field() {
+  python3 - "\$1" "\$2" <<'PYEOF'
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    value = data
+    for part in sys.argv[2].split('.'):
+        value = value.get(part, '') if isinstance(value, dict) else ''
+    if isinstance(value, (dict, list)):
+        print(json.dumps(value, separators=(',', ':')))
+    elif value is None:
+        print('')
+    elif isinstance(value, bool):
+        print('true' if value else 'false')
+    else:
+        print(value)
+except Exception:
+    print('')
+PYEOF
+}
+
+PING_HEADERS=()
+[[ -n "\$API_KEY" ]] && PING_HEADERS=(-H "X-API-Key: \$API_KEY")
+if [[ -n "\$API_KEY" ]]; then
+  PING_URL="\${ENDPOINT%/}/api/cli/download/ping"
+  if ! curl -fsSL "\${PING_HEADERS[@]}" "\$PING_URL" >/dev/null; then
+    err "Download key is invalid for \$PING_URL. Copy the latest Download API Key from Profile and retry."
+    exit 22
+  fi
+fi
+
+INIT_URL="\${ENDPOINT%/}/api/cli/download/init?agentId=\$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "\$AGENT_ID")"
+[[ -n "\$VERSION" ]] && INIT_URL="\${INIT_URL}&version=\$VERSION"
+
+INIT_HEADERS=(-H "Accept: application/json")
+[[ -n "\$API_KEY" ]] && INIT_HEADERS+=(-H "X-API-Key: \$API_KEY")
+
+info "Resolving download URL ..."
+response="\$(curl -sS "\${INIT_HEADERS[@]}" -w "\\n%{http_code}" "\$INIT_URL")" || { err "Download init request failed"; exit \$?; }
+http_status="\${response##*\$'\\n'}"
+response_body="\${response%\$'\\n'*}"
+
+if [[ "\$http_status" != 2* ]]; then
+  error_message="\$(json_field "\$response_body" error)"
+  if [[ "\$http_status" == "404" ]]; then
+    err "Download unavailable: \${error_message:-Agent file not found in storage}"
+  else
+    err "Download init failed (HTTP \$http_status): \${error_message:-\$response_body}"
+  fi
+  exit 22
+fi
+
+error_message="\$(json_field "\$response_body" error)"
+if [[ -n "\$error_message" ]]; then
+  err "Download unavailable: \$error_message"
+  exit 22
+fi
+
+download_url="\$(json_field "\$response_body" url)"
+filename="\$(json_field "\$response_body" filename)"
+direct="\$(json_field "\$response_body" direct)"
+storage="\$(json_field "\$response_body" storage)"
+
+[[ -n "\$download_url" ]] || { err "Download init response missing url"; exit 1; }
+[[ -n "\$OUTPUT" ]] || OUTPUT="\${filename:-agent.zip}"
+
+if [[ "\$direct" == "true" ]]; then
+  info "Direct downloading from \$storage ..."
+else
+  info "Downloading via GetAgents relay (\$storage) ..."
+fi
+
+CURL_ARGS=(-fsSL -o "\$OUTPUT")
+[[ -n "\$API_KEY" && "\$direct" != "true" ]] && CURL_ARGS+=(-H "X-API-Key: \$API_KEY")
+
+if curl "\${CURL_ARGS[@]}" "\$download_url"; then
+  info "Saved to \$OUTPUT"
+else
+  CODE=\$?
+  err "Download failed (curl exit \$CODE)"
+  exit \$CODE
+fi
+`;
+
+export function renderDownloadScript(endpoint: string): string {
+  return DOWNLOAD_SCRIPT_TEMPLATE.replaceAll('__ENDPOINT__', endpoint);
 }

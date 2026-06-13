@@ -2,7 +2,7 @@ import { escapeHtml, agentInitial, truncate, avatarColor, formatDateShort } from
 import { api, getAdminApiKey, getUploadApiKey, getDownloadApiKey, publicUrl } from './api.js';
 import { render, navigate } from './router.js';
 import { state } from './state.js';
-import { toast, buildCliCommand, buildCliBaseUrl, agentTypeLabel, agentTypeSource } from './admin.js';
+import { toast, buildCliCommand, buildDownloadCliCommand, buildRestoreCliCommand, buildAgentDownloadUrl, buildCliBaseUrl, agentTypeLabel, agentTypeSource } from './admin.js';
 
 async function renderAgentDetail(agentId) {
   state.detailAgentId = agentId;
@@ -49,6 +49,8 @@ async function renderAgentDetail(agentId) {
       </div>
 
       ${renderAgentCliPanel(agent)}
+
+      ${renderAgentDownloadCliPanel(agent)}
 
       <div class="card" style="margin-bottom:1rem">
         <h3 style="margin-bottom:0.75rem">Version History (${versions.length})</h3>
@@ -136,6 +138,37 @@ function renderAgentCliPanel(agent) {
   `;
 }
 
+function renderAgentDownloadCliPanel(agent) {
+  const apiKey = getDownloadApiKey();
+  const base = buildCliBaseUrl();
+  const cmd = buildDownloadCliCommand({ agentId: agent.id });
+  return `
+    <div class="card cli-panel" style="margin-bottom:1rem">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem;flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0">Download from CLI</h3>
+          <p class="text-muted" style="margin:0.2rem 0 0;font-size:0.85rem">
+            Download the latest package for <strong>${escapeHtml(agent.name)}</strong>.
+            When object storage is enabled, the script downloads directly from storage.
+          </p>
+        </div>
+      </div>
+
+      ${apiKey ? '' : `
+        <div style="margin-top:0.75rem;padding:0.55rem 0.7rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;color:#9a3412;font-size:0.82rem">
+          Replace <code>&lt;your-download-key&gt;</code> with your Download API Key. Sign in again to inject it automatically.
+        </div>
+      `}
+
+      <pre class="cli-code" style="margin-top:0.65rem"><code id="cli-download-cmd-detail">${escapeHtml(cmd)}</code></pre>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+        <button class="btn-ghost" onclick="copyCliCommand('cli-download-cmd-detail')">Copy command</button>
+        <a class="btn-ghost" style="text-decoration:none;display:inline-block" href="${base}/cli/download.sh" target="_blank" rel="noopener">View script</a>
+      </div>
+    </div>
+  `;
+}
+
 function formatFileSize(bytes) {
   if (!bytes || bytes === 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -155,38 +188,11 @@ function formatTime(timestamp) {
 }
 
 function versionDownloadUrl(agentId, version) {
-  const downloadKey = getDownloadApiKey();
-  const keyPart = downloadKey ? `?downloadKey=${encodeURIComponent(downloadKey)}` : '';
-  return publicUrl(`/api/agents/${agentId}/download/${version}${keyPart}`);
-}
-
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+  return buildAgentDownloadUrl(agentId, version);
 }
 
 function restoreVersionCommand(agentId, version) {
-  const url = versionDownloadUrl(agentId, version);
-  const script = [
-    'set -euo pipefail',
-    'tmp=$(mktemp -d)',
-    'trap \'rm -rf "$tmp"\' EXIT',
-    `curl -fsSL ${shellQuote(url)} -o "$tmp/agent-v${version}.zip"`,
-    `backup=".getagents-restore-backup-v${version}-$(date +%Y%m%d%H%M%S)"`,
-    'mkdir -p "$backup"',
-    `python3 - "$tmp/agent-v${version}.zip" "$backup" <<'PYEOF'`,
-    'import os, shutil, sys, zipfile',
-    'zip_path, backup_dir = sys.argv[1], sys.argv[2]',
-    'with zipfile.ZipFile(zip_path) as zf:',
-    '    names = [n for n in zf.namelist() if n and not n.endswith("/") and not os.path.isabs(n) and ".." not in n.split("/")]',
-    '    targets = sorted({n.split("/", 1)[0] for n in names})',
-    '    for target in targets:',
-    '        if os.path.exists(target):',
-    '            shutil.move(target, os.path.join(backup_dir, target))',
-    '    zf.extractall(".")',
-    'PYEOF',
-    'echo "Restored package. Previous files backed up in $backup"',
-  ].join('; ');
-  return `bash -c ${shellQuote(script)}`;
+  return buildRestoreCliCommand({ agentId, version });
 }
 
 function renderDiff() {

@@ -189,6 +189,20 @@ button { cursor: pointer; }
 .mp-empty-icon { margin-bottom: 0.75rem; }
 .mp-empty h3 { font-size: 1.1rem; color: var(--text); margin-bottom: 0.35rem; }
 .mp-empty p { color: var(--muted); font-size: 0.9rem; }
+.mp-modal-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 1rem; background: rgba(15,23,42,0.45); backdrop-filter: blur(2px); animation: fadeInUp 0.18s ease; }
+.mp-modal { width: min(640px, 100%); max-height: min(85vh, 720px); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 24px 48px rgba(15,23,42,0.18); overflow: hidden; }
+.mp-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; padding: 1rem 1.1rem 0.75rem; border-bottom: 1px solid var(--border); }
+.mp-modal-title { margin: 0; font-size: 1.05rem; letter-spacing: -0.01em; }
+.mp-modal-subtitle { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.82rem; }
+.mp-modal-close { flex-shrink: 0; width: 32px; height: 32px; border: none; border-radius: 10px; background: #f1f5f9; color: #64748b; font-size: 1.25rem; line-height: 1; cursor: pointer; }
+.mp-modal-close:hover { background: #e2e8f0; color: var(--text); }
+.mp-modal-tabs { display: flex; gap: 0.35rem; padding: 0.75rem 1.1rem 0; border-bottom: 1px solid var(--border); }
+.mp-modal-tab { padding: 0.45rem 0.8rem; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 0.85rem; font-weight: 600; cursor: pointer; margin-bottom: -1px; border-radius: 8px 8px 0 0; }
+.mp-modal-tab:hover { color: var(--text); background: #f8fafc; }
+.mp-modal-tab.active { color: var(--primary); border-bottom-color: var(--primary); background: transparent; }
+.mp-modal-body { padding: 1rem 1.1rem 1.1rem; overflow: auto; display: grid; gap: 0.65rem; }
+.mp-modal-hint { margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.5; }
+.mp-modal-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 /* ---- CLI panel ---- */
 .cli-panel { background: linear-gradient(180deg, #f8fbff 0%, var(--surface) 100%); border-color: #c7d2fe; }
 .cli-step-label { font-weight: 600; font-size: 0.82rem; color: var(--text); margin-bottom: 0.35rem; }

@@ -608,7 +608,10 @@ export async function updateAgent(id: string, data: Partial<AgentConfig>): Promi
   }
 
   const updated = await getAgent(id);
-  if (updated && (data.name !== undefined || data.type !== undefined || data.description !== undefined || data.filename !== undefined || data.tags !== undefined)) {
+  const filePackageChange = data.filePath !== undefined || data.fileSize !== undefined || data.fileHash !== undefined;
+  const metadataChange = data.name !== undefined || data.type !== undefined || data.description !== undefined
+    || data.filename !== undefined || data.tags !== undefined;
+  if (updated && metadataChange && !filePackageChange) {
     await createVersion(id, 'Update');
   }
 

@@ -9,7 +9,7 @@ import shareRouter from './routes/share.js';
 import adminRouter from './routes/admin.js';
 import cliRouter from './routes/cli.js';
 import { createLogger } from './utils/logger.js';
-import { renderUploadScript } from './utils/cliScript.js';
+import { renderUploadScript, renderDownloadScript } from './utils/cliScript.js';
 import { ensureAdminUser } from './utils/ensureAdmin.js';
 import { getConfiguredAccessUrl, inferAccessUrl, normalizeRoutePrefix } from './utils/accessUrl.js';
 
@@ -62,6 +62,12 @@ function mountApp(prefix: string) {
     const endpoint = inferAccessUrl(req, base);
     res.setHeader('Cache-Control', 'no-store');
     res.type('text/x-shellscript').send(renderUploadScript(endpoint));
+  });
+
+  app.get(`${base}/cli/download.sh`, (req, res) => {
+    const endpoint = inferAccessUrl(req, base);
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('text/x-shellscript').send(renderDownloadScript(endpoint));
   });
 
   app.use(base || '/', express.static(publicDir, {

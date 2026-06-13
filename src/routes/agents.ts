@@ -1,8 +1,9 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import * as db from '../db/store.js';
-import { requireAuth, requireDownloadAuth } from '../middleware/adminAuth.js';
+import { requireAuth } from '../middleware/adminAuth.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import { agentFilePath, hashAgentFile, saveAgentFileFromPath, getAgentFileStream, deleteAgentVersionFile } from '../utils/fileStore.js';
+import { hashAgentFile, saveAgentFileFromPath, deleteAgentVersionFile, agentFileExists } from '../utils/fileStore.js';
+import { authorizeAgentDownload, prepareAgentDownload, sendPreparedAgentDownload } from '../utils/agentDownload.js';
 import { inferAccessUrl, normalizeRoutePrefix } from '../utils/accessUrl.js';
 import { cleanupUploadedFile, createZipUpload, validateAgentName, validateAgentType, validateManagedTags } from './agentMetadata.js';
 import type { AgentConfig } from '../shared/types.js';
@@ -11,28 +12,31 @@ import crypto from 'crypto';
 const router = Router();
 const upload = createZipUpload();
 
-function downloadFileName(agentName: string, version: number): string {
-  const safeName = agentName.replace(/[^a-z0-9-]/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'agent';
-  return `${safeName}-v${version}.zip`;
-}
-
 async function allowPublicOrDownloadAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const agent = await db.getAgent(req.params.id);
-  if (!agent) {
-    res.status(404).json({ error: 'Agent not found' });
+  const requestedVersion = req.params.version ? Number(req.params.version) : undefined;
+  const auth = await authorizeAgentDownload(req, req.params.id, requestedVersion);
+  if (!auth.ok) {
+    res.status(auth.status).json({ error: auth.error });
     return;
   }
 
-  (req as any).agent = agent;
+  (req as any).agent = auth.download.agent;
+  if (auth.download.publicVersion !== undefined) {
+    (req as any).publicVersion = auth.download.publicVersion;
+  }
+  next();
+}
+
+async function sendAgentDownload(req: Request, res: Response): Promise<void> {
   const requestedVersion = req.params.version ? Number(req.params.version) : undefined;
-  const published = await db.getPublishedVersion(req.params.id);
-  const hasAuthKey = Boolean(req.headers.authorization || req.headers['x-api-key'] || req.query.downloadKey);
-  if (published && !hasAuthKey && (requestedVersion === undefined || published.version === requestedVersion)) {
-    (req as any).publicVersion = published.version;
-    return next();
+  const auth = await authorizeAgentDownload(req, req.params.id, requestedVersion);
+  if (!auth.ok) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
   }
 
-  requireDownloadAuth(req, res, next);
+  const prepared = await prepareAgentDownload(auth.download, req.params.id);
+  await sendPreparedAgentDownload(res, prepared);
 }
 
 // ---- Agent CRUD ----
@@ -88,6 +92,9 @@ router.post('/', requireAuth, upload.single('agentFile'), asyncHandler(async (re
     });
 
     const filePath = await saveAgentFileFromPath(agent.id, 1, req.file.path);
+    if (!await agentFileExists(filePath, { agentId: agent.id, version: 1 })) {
+      return res.status(500).json({ error: 'Uploaded package was not found in storage after save' });
+    }
     const savedAgent = await db.updateAgent(agent.id, { filePath }) || agent;
     await db.createVersion(agent.id, 'Initial upload');
 
@@ -139,9 +146,13 @@ router.put('/:id', requireAuth, upload.single('agentFile'), asyncHandler(async (
       const versions = await db.getVersions(req.params.id);
       const nextVersion = (versions[0]?.version ?? 0) + 1;
       patch.filePath = await saveAgentFileFromPath(req.params.id, nextVersion, req.file.path);
+      if (!await agentFileExists(patch.filePath, { agentId: req.params.id, version: nextVersion })) {
+        return res.status(500).json({ error: 'Uploaded package was not found in storage after save' });
+      }
     }
 
     const agent = await db.updateAgent(req.params.id, patch);
+    if (req.file) await db.createVersion(req.params.id, 'Update');
     res.json(agent);
   } finally {
     await cleanupUploadedFile(req.file);
@@ -162,39 +173,9 @@ router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
 
 // ---- File Download ----
 
-router.get('/:id/download', asyncHandler(allowPublicOrDownloadAuth), asyncHandler(async (req, res) => {
-  const agent = (req as any).agent || await db.getAgent(req.params.id);
-  const publicVersion = (req as any).publicVersion;
-  const versionRecord = publicVersion
-    ? await db.getVersion(req.params.id, publicVersion)
-    : (await db.getVersions(req.params.id))[0];
-  const version = versionRecord?.version ?? 1;
-  const filePath = versionRecord?.snapshot.filePath || agent.filePath || agentFilePath(req.params.id, version);
+router.get('/:id/download', asyncHandler(allowPublicOrDownloadAuth), asyncHandler(sendAgentDownload));
 
-  const stream = await getAgentFileStream(filePath, { agentId: req.params.id, version: publicVersion });
-  if (!stream) return res.status(404).json({ error: 'Agent file not found' });
-
-  res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName(agent.name, version)}"`);
-  res.setHeader('Content-Length', versionRecord?.snapshot.fileSize || agent.fileSize);
-  stream.pipe(res);
-}));
-
-router.get('/:id/download/:version', asyncHandler(allowPublicOrDownloadAuth), asyncHandler(async (req, res) => {
-  const agent = (req as any).agent || await db.getAgent(req.params.id);
-
-  const version = Number(req.params.version);
-  if (isNaN(version)) return res.status(400).json({ error: 'Invalid version number' });
-  const versionRecord = await db.getVersion(req.params.id, version);
-  const filePath = versionRecord?.snapshot.filePath || agentFilePath(req.params.id, version);
-
-  const stream = await getAgentFileStream(filePath, { agentId: req.params.id, version });
-  if (!stream) return res.status(404).json({ error: 'Version file not found' });
-
-  res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName(agent.name, version)}"`);
-  stream.pipe(res);
-}));
+router.get('/:id/download/:version', asyncHandler(allowPublicOrDownloadAuth), asyncHandler(sendAgentDownload));
 
 // ---- Version Management ----
 

@@ -108,7 +108,7 @@ function resetTransientUiState() {
   state.agentFormFile = null;
   state.detailDiff = null;
   state.detailExpandedRestoreVersion = null;
-  state.marketplaceExpandedAgentId = null;
+  state.marketplaceModalAgentId = null;
   document.getElementById('nav-user-info')?.classList.remove('open');
 }
 
@@ -583,6 +583,10 @@ function buildCliScriptUrl() {
   return `${buildCliBaseUrl().replace(/\/+$/g, '')}/cli/upload.sh`;
 }
 
+function buildDownloadCliScriptUrl() {
+  return `${buildCliBaseUrl().replace(/\/+$/g, '')}/cli/download.sh`;
+}
+
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
@@ -629,6 +633,29 @@ function buildCliCommand({ agentId, agentName, type, backupDirs, description } =
   if (description) args.push('--description', shellQuote(description));
 
   return `${keyPart} bash <(curl -fsSL ${shellQuote(buildCliScriptUrl())}) ${args.join(' ')}`;
+}
+
+function buildDownloadCliCommand({ agentId, version } = {}) {
+  const apiKey = getDownloadApiKey();
+  const keyPart = apiKey
+    ? `GETAGENTS_DOWNLOAD_API_KEY=${shellQuote(apiKey)} `
+    : '';
+  const args = ['--agent-id', shellQuote(agentId || '<agent-id>')];
+  if (version) args.push('--version', String(version));
+  return `${keyPart}bash <(curl -fsSL ${shellQuote(buildDownloadCliScriptUrl())}) ${args.join(' ')}`;
+}
+
+function buildRestoreCliCommand({ agentId, version } = {}) {
+  const downloadCmd = buildDownloadCliCommand({ agentId, version });
+  const zipName = version ? `agent-v${version}.zip` : 'agent.zip';
+  return `${downloadCmd} --output ${shellQuote(zipName)} && unzip -oq ${shellQuote(zipName)}`;
+}
+
+function buildAgentDownloadUrl(agentId, version) {
+  const downloadKey = getDownloadApiKey();
+  const keyPart = downloadKey ? `?downloadKey=${encodeURIComponent(downloadKey)}` : '';
+  const path = version ? `/api/agents/${agentId}/download/${version}` : `/api/agents/${agentId}/download`;
+  return publicUrl(`${path}${keyPart}`);
 }
 
 window.copyCliCommand = async (id) => {
@@ -1106,11 +1133,8 @@ window.cancelEdit = () => {
 // ---- Download ----
 
 window.downloadAgent = (id) => {
-  const downloadKey = getDownloadApiKey();
-  const suffix = downloadKey ? `?downloadKey=${encodeURIComponent(downloadKey)}` : '';
-  const url = publicUrl(`/api/agents/${id}/download${suffix}`);
   const a = document.createElement('a');
-  a.href = url;
+  a.href = buildAgentDownloadUrl(id);
   a.download = '';
   document.body.appendChild(a);
   a.click();
@@ -1218,4 +1242,4 @@ window.navigateTo = (path) => {
   navigate(path);
 };
 
-export { renderAdmin, renderProfile, renderUserAgents, toast, buildCliCommand, buildCliBaseUrl, agentTypeLabel, agentTypeSource };
+export { renderAdmin, renderProfile, renderUserAgents, toast, buildCliCommand, buildDownloadCliCommand, buildRestoreCliCommand, buildAgentDownloadUrl, buildCliBaseUrl, buildDownloadCliScriptUrl, agentTypeLabel, agentTypeSource };

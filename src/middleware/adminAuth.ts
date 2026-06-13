@@ -124,3 +124,9 @@ export function requireUploadAuth(req: Request, res: Response, next: NextFunctio
 export function requireDownloadAuth(req: Request, res: Response, next: NextFunction): void {
   requireAuthWithPurposes(req, res, next, ['download']);
 }
+
+export async function authenticateApiKey(req: Request, purposes: ApiKeyPurpose[]): Promise<string | null> {
+  const apiKey = extractApiKey(req, purposes);
+  if (!apiKey) return null;
+  return verifyApiKey(apiKey, purposes);
+}

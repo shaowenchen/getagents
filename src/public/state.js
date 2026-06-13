@@ -28,7 +28,9 @@ const state = {
   marketplaceSearch: '',
   marketplaceType: '',
   marketplaceSort: 'popular',
-  marketplaceExpandedAgentId: null,
+  marketplaceModalAgentId: null,
+  marketplaceModalTab: 'download',
+  marketplaceAgents: [],
 
   // Toast
   toasts: [],

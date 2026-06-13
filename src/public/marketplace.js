@@ -1,8 +1,8 @@
-import { escapeHtml, agentInitial, formatTime, truncate, avatarColor } from './utils.js';
-import { api, publicUrl } from './api.js';
+import { escapeHtml, agentInitial, truncate, avatarColor } from './utils.js';
+import { api } from './api.js';
 import { render } from './router.js';
 import { state } from './state.js';
-import { toast } from './admin.js';
+import { toast, buildDownloadCliCommand, buildRestoreCliCommand, buildCliBaseUrl } from './admin.js';
 
 async function renderMarketplace() {
   const { search, marketplaceType: type, sort } = state;
@@ -16,7 +16,9 @@ async function renderMarketplace() {
     api('/marketplace/types').catch(() => ({ types: [] })),
   ]);
 
+  state.marketplaceAgents = agents;
   const hasActiveFilters = search || type;
+  const modalAgent = agents.find((agent) => agent.id === state.marketplaceModalAgentId);
 
   render(`
     <div class="mp-toolbar">
@@ -45,7 +47,7 @@ async function renderMarketplace() {
 
     ${agents.length ? `
     <div class="mp-grid">
-      ${agents.map(a => renderMarketplaceCard(a)).join('')}
+      ${agents.map((a) => renderMarketplaceCard(a)).join('')}
     </div>
     ` : `
     <div class="mp-empty">
@@ -56,6 +58,8 @@ async function renderMarketplace() {
       <p>${hasActiveFilters ? 'Try adjusting your filters or search terms.' : 'No released agents have been published yet. Be the first!'}</p>
     </div>
     `}
+
+    ${modalAgent ? renderMarketplaceModal(modalAgent) : ''}
   `);
 }
 
@@ -64,8 +68,6 @@ function renderMarketplaceCard(agent) {
   const color = avatarColor(agent.name);
   const fileLabel = formatFileSize(agent.fileSize || 0);
   const typeLabel = agent.type || 'currentdir';
-  const expanded = state.marketplaceExpandedAgentId === agent.id;
-  const commandId = `mp-restore-cmd-${agent.id}`;
 
   return `
     <div class="mp-card">
@@ -90,20 +92,49 @@ function renderMarketplaceCard(agent) {
         </span>
       </div>
       <div class="mp-card-footer">
-        <button class="mp-btn-install" onclick="getFromMarketplace('${agent.id}')">
+        <button class="mp-btn-install" onclick="openMarketplaceModal('${agent.id}')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          ${expanded ? 'Hide Script' : 'Get'}
+          Get
         </button>
       </div>
-      ${expanded ? `
-        <div class="mp-restore-panel">
-          <div class="mp-restore-head">
-            <span>Restore script</span>
-            <button class="btn-ghost" onclick="copyMarketplaceRestore('${agent.id}')">Copy script</button>
+    </div>
+  `;
+}
+
+function renderMarketplaceModal(agent) {
+  const tab = state.marketplaceModalTab === 'restore' ? 'restore' : 'download';
+  const version = agent.publishedVersion || undefined;
+  const command = tab === 'restore'
+    ? buildRestoreCliCommand({ agentId: agent.id, version })
+    : buildDownloadCliCommand({ agentId: agent.id, version });
+  const base = buildCliBaseUrl();
+  const versionLabel = version ? `v${version}` : 'latest';
+
+  return `
+    <div class="mp-modal-overlay" onclick="closeMarketplaceModal()">
+      <div class="mp-modal" role="dialog" aria-modal="true" aria-labelledby="mp-modal-title" onclick="event.stopPropagation()">
+        <div class="mp-modal-header">
+          <div>
+            <h3 class="mp-modal-title" id="mp-modal-title">${escapeHtml(agent.name)}</h3>
+            <p class="mp-modal-subtitle">${escapeHtml(agent.type || 'currentdir')} · ${versionLabel} · ${formatFileSize(agent.fileSize || 0)}</p>
           </div>
-          <pre class="cli-code cli-mini mp-restore-code"><code id="${commandId}">${escapeHtml(restoreCommand(agent.id, agent.publishedVersion))}</code></pre>
+          <button type="button" class="mp-modal-close" aria-label="Close" onclick="closeMarketplaceModal()">&times;</button>
         </div>
-      ` : ''}
+        <div class="mp-modal-tabs">
+          <button type="button" class="mp-modal-tab ${tab === 'download' ? 'active' : ''}" onclick="switchMarketplaceTab('download')">Download</button>
+          <button type="button" class="mp-modal-tab ${tab === 'restore' ? 'active' : ''}" onclick="switchMarketplaceTab('restore')">Restore</button>
+        </div>
+        <div class="mp-modal-body">
+          <p class="mp-modal-hint">${tab === 'download'
+    ? 'Download the published package with download.sh. Published releases do not require an API key. When object storage is enabled, downloads go directly to storage.'
+    : 'Download and unzip the package into the current directory.'}</p>
+          <pre class="cli-code"><code id="mp-modal-cmd">${escapeHtml(command)}</code></pre>
+          <div class="mp-modal-actions">
+            <button type="button" class="btn-primary" onclick="copyCliCommand('mp-modal-cmd')">Copy command</button>
+            ${tab === 'download' ? `<a class="btn-ghost" style="text-decoration:none;display:inline-block" href="${base}/cli/download.sh" target="_blank" rel="noopener">View script</a>` : ''}
+          </div>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -115,35 +146,6 @@ function formatFileSize(bytes) {
   let s = bytes;
   while (s >= 1024 && i < units.length - 1) { s /= 1024; i++; }
   return `${s.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
-
-function restoreCommand(id, version) {
-  const url = publicUrl(version ? `/api/agents/${id}/download/${version}` : `/api/agents/${id}/download`);
-  const script = [
-    'set -euo pipefail',
-    'tmp=$(mktemp -d)',
-    'trap \'rm -rf "$tmp"\' EXIT',
-    `curl -fsSL ${shellQuote(url)} -o "$tmp/agent.zip"`,
-    `backup=".getagents-restore-backup${version ? `-v${version}` : ''}-$(date +%Y%m%d%H%M%S)"`,
-    'mkdir -p "$backup"',
-    'python3 - "$tmp/agent.zip" "$backup" <<\'PYEOF\'',
-    'import os, shutil, sys, zipfile',
-    'zip_path, backup_dir = sys.argv[1], sys.argv[2]',
-    'with zipfile.ZipFile(zip_path) as zf:',
-    '    names = [n for n in zf.namelist() if n and not n.endswith("/") and not os.path.isabs(n) and ".." not in n.split("/")]',
-    '    targets = sorted({n.split("/", 1)[0] for n in names})',
-    '    for target in targets:',
-    '        if os.path.exists(target):',
-    '            shutil.move(target, os.path.join(backup_dir, target))',
-    '    zf.extractall(".")',
-    'PYEOF',
-    'echo "Restored package. Previous files backed up in $backup"',
-  ].join('; ');
-  return `bash -c ${shellQuote(script)}`;
 }
 
 // ---- Event handlers ----
@@ -165,27 +167,24 @@ window.clearAllFilters = () => {
   renderMarketplace();
 };
 
-window.getFromMarketplace = (id) => {
-  state.marketplaceExpandedAgentId = state.marketplaceExpandedAgentId === id ? null : id;
+window.openMarketplaceModal = (id) => {
+  state.marketplaceModalAgentId = id;
+  state.marketplaceModalTab = 'download';
   renderMarketplace();
 };
 
-window.copyMarketplaceRestore = async (id) => {
-  const command = document.getElementById(`mp-restore-cmd-${id}`)?.textContent || restoreCommand(id);
-  try {
-    await navigator.clipboard.writeText(command);
-    toast('Restore command copied');
-  } catch {
-    const textarea = document.createElement('textarea');
-    textarea.value = command;
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textarea);
-    toast('Restore command copied');
-  }
+window.closeMarketplaceModal = () => {
+  state.marketplaceModalAgentId = null;
+  renderMarketplace();
+};
+
+window.switchMarketplaceTab = (tab) => {
+  state.marketplaceModalTab = tab === 'restore' ? 'restore' : 'download';
+  renderMarketplace();
+};
+
+window.getFromMarketplace = (id) => {
+  window.openMarketplaceModal(id);
 };
 
 export { renderMarketplace };

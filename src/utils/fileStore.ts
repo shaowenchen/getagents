@@ -2,6 +2,7 @@ import {
   CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -344,6 +345,66 @@ function supportsDirectAgentUpload(): boolean {
   return STORAGE_DRIVER === 's3';
 }
 
+function supportsDirectAgentDownload(): boolean {
+  return STORAGE_DRIVER === 's3';
+}
+
+function isS3MissingObjectError(err: unknown): boolean {
+  const name = err instanceof Error ? err.name : '';
+  const statusCode = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+  return name === 'NoSuchKey' || name === 'NotFound' || statusCode === 404;
+}
+
+async function resolveS3AgentFileKey(filePath: string, fallback?: { agentId: string; version?: number }): Promise<string | null> {
+  const keys = [s3StoredFileKey(filePath)];
+  if (fallback) {
+    const fileName = fallback.version !== undefined ? versionFileName(fallback.version) : 'current.zip';
+    keys.push(
+      ...(fallback.version !== undefined
+        ? [s3UploadKey(fallback.agentId, fileName), s3Key(fallback.agentId, fileName)]
+        : [s3DownloadKey(fallback.agentId, fileName), s3Key(fallback.agentId, fileName)])
+    );
+  }
+
+  for (const key of keys) {
+    try {
+      await s3.send(new HeadObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: key,
+      }));
+      return key;
+    } catch (err) {
+      if (isS3MissingObjectError(err)) continue;
+      throw err;
+    }
+  }
+  return null;
+}
+
+async function createDirectAgentDownload(
+  filePath: string,
+  fallback: { agentId: string; version?: number } | undefined,
+  filename: string,
+): Promise<{ url: string; expiresIn: number } | null> {
+  if (!supportsDirectAgentDownload()) return null;
+
+  const key = await resolveS3AgentFileKey(filePath, fallback);
+  if (!key) return null;
+
+  const expiresIn = Number(process.env.S3_DIRECT_DOWNLOAD_EXPIRES_SECONDS || process.env.S3_DIRECT_UPLOAD_EXPIRES_SECONDS || 900);
+  const command = new GetObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: key,
+    ResponseContentDisposition: `attachment; filename="${filename.replace(/"/g, '\\"')}"`,
+    ResponseContentType: 'application/zip',
+  });
+  const url = await getSignedUrl(s3, command, {
+    expiresIn,
+    unsignableHeaders: S3_PRESIGN_UNSIGNABLE_HEADERS,
+  });
+  return { url, expiresIn };
+}
+
 const S3_PRESIGN_UNSIGNABLE_HEADERS = new Set([
   'x-amz-checksum-crc32',
   'x-amz-checksum-crc32c',
@@ -663,9 +724,7 @@ async function getS3AgentFileStream(filePath: string, fallback?: { agentId: stri
       }));
       return bodyToStream(result.Body);
     } catch (err) {
-      const name = err instanceof Error ? err.name : '';
-      const statusCode = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
-      if (name === 'NoSuchKey' || name === 'NotFound' || statusCode === 404) continue;
+      if (isS3MissingObjectError(err)) continue;
       throw err;
     }
   }
@@ -678,6 +737,16 @@ async function getAgentFileStream(filePath: string, fallback?: { agentId: string
   return getLocalAgentFileStream(filePath, fallback);
 }
 
+async function agentFileExists(filePath: string, fallback?: { agentId: string; version?: number }): Promise<boolean> {
+  if (STORAGE_DRIVER === 's3') return (await resolveS3AgentFileKey(filePath, fallback)) !== null;
+  const stream = await getAgentFileStream(filePath, fallback);
+  if (!stream) return false;
+  if (typeof (stream as NodeJS.ReadableStream & { destroy?: () => void }).destroy === 'function') {
+    (stream as NodeJS.ReadableStream & { destroy: () => void }).destroy();
+  }
+  return true;
+}
+
 export {
   ensureAgentDir,
   getAgentDir,
@@ -686,7 +755,9 @@ export {
   saveAgentFile,
   saveAgentFileFromPath,
   supportsDirectAgentUpload,
+  supportsDirectAgentDownload,
   createDirectAgentUpload,
+  createDirectAgentDownload,
   commitDirectAgentUpload,
   getAgentFilePath,
   copyAgentFiles,
@@ -694,4 +765,5 @@ export {
   deleteAgentFiles,
   deleteAgentVersionFile,
   getAgentFileStream,
+  agentFileExists,
 };

@@ -767,9 +767,10 @@ export async function updateAgent(id: string, input: Partial<AgentConfig>): Prom
   };
 
   await saveAgent(updated);
-  const meaningfulChange = input.name !== undefined || input.description !== undefined
+  const filePackageChange = input.filePath !== undefined || input.fileSize !== undefined || input.fileHash !== undefined;
+  const metadataChange = input.name !== undefined || input.description !== undefined
     || input.type !== undefined || input.filename !== undefined || input.tags !== undefined;
-  if (meaningfulChange) await createVersion(id, 'Update');
+  if (metadataChange && !filePackageChange) await createVersion(id, 'Update');
   return updated;
 }
 

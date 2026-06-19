@@ -130,3 +130,9 @@ export async function authenticateApiKey(req: Request, purposes: ApiKeyPurpose[]
   if (!apiKey) return null;
   return verifyApiKey(apiKey, purposes);
 }
+
+export function getSessionUserId(req: Request): string | null {
+  const token = extractToken(req);
+  if (!token) return null;
+  return verifyToken(token)?.userId ?? null;
+}

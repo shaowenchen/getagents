@@ -130,7 +130,8 @@ function renderMarketplaceModal(agent) {
     : 'Download and unzip the package into the current directory.'}</p>
           <pre class="cli-code"><code id="mp-modal-cmd">${escapeHtml(command)}</code></pre>
           <div class="mp-modal-actions">
-            <button type="button" class="btn-primary" onclick="copyCliCommand('mp-modal-cmd')">Copy command</button>
+            ${tab === 'download' ? `<button type="button" class="btn-primary" onclick="downloadAgentVersion('${agent.id}', ${agent.publishedVersion || 1})">Download ZIP</button>` : ''}
+            <button type="button" class="${tab === 'download' ? 'btn-ghost' : 'btn-primary'}" onclick="copyCliCommand('mp-modal-cmd')">Copy command</button>
             ${tab === 'download' ? `<a class="btn-ghost" style="text-decoration:none;display:inline-block" href="${base}/cli/download.sh" target="_blank" rel="noopener">View script</a>` : ''}
           </div>
         </div>

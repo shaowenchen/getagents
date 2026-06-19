@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { agentFilePath, agentFileExists, createDirectAgentDownload, getAgentFileStream, supportsDirectAgentDownload } from './fileStore.js';
-import { authenticateApiKey } from '../middleware/adminAuth.js';
+import { authenticateApiKey, getSessionUserId } from '../middleware/adminAuth.js';
 import type { AgentConfig, AgentVersion } from '../shared/types.js';
 import * as db from '../db/store.js';
 
@@ -66,6 +66,17 @@ export async function authorizeAgentDownload(
   const hasAuthKey = hasDownloadAuthKey(req);
   if (published && !hasAuthKey && (requestedVersion === undefined || published.version === requestedVersion)) {
     return { ok: true, download: { ...download, publicVersion: published.version } };
+  }
+
+  const sessionUserId = getSessionUserId(req);
+  if (sessionUserId) {
+    const sessionUser = await db.getUserById(sessionUserId);
+    const ownsAgent = download.agent.userId === sessionUserId;
+    const isSystemAdmin = sessionUser?.username === 'admin';
+    if (ownsAgent || isSystemAdmin) {
+      return { ok: true, download };
+    }
+    return { ok: false, status: 403, error: 'Not your agent' };
   }
 
   const userId = await authenticateApiKey(req, ['download']);

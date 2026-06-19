@@ -1,5 +1,5 @@
 import { escapeHtml, agentInitial, formatTime, truncate, avatarColor } from './utils.js';
-import { api, apiUpload, getAdminToken, setAdminToken, clearAdminToken, getAdminApiKey, getUploadApiKey, getDownloadApiKey, setUserApiKeys, publicUrl, routePrefix } from './api.js';
+import { api, apiUpload, apiUrl, getAdminToken, setAdminToken, clearAdminToken, getAdminApiKey, getUploadApiKey, getDownloadApiKey, setUserApiKeys, publicUrl, routePrefix } from './api.js';
 import { render, navigate } from './router.js';
 import { state, createAgentForm, resetAgentForm } from './state.js';
 
@@ -653,9 +653,53 @@ function buildRestoreCliCommand({ agentId, version } = {}) {
 
 function buildAgentDownloadUrl(agentId, version) {
   const downloadKey = getDownloadApiKey();
-  const keyPart = downloadKey ? `?downloadKey=${encodeURIComponent(downloadKey)}` : '';
-  const path = version ? `/api/agents/${agentId}/download/${version}` : `/api/agents/${agentId}/download`;
-  return publicUrl(`${path}${keyPart}`);
+  const params = new URLSearchParams();
+  if (downloadKey) params.set('downloadKey', downloadKey);
+  const path = version ? `/agents/${agentId}/download/${version}` : `/agents/${agentId}/download`;
+  const qs = params.toString();
+  return apiUrl(path) + (qs ? `?${qs}` : '');
+}
+
+async function triggerAgentDownload(agentId, version) {
+  const downloadKey = getDownloadApiKey();
+  const token = getAdminToken();
+  const params = new URLSearchParams();
+  if (downloadKey) params.set('downloadKey', downloadKey);
+  const path = version ? `/agents/${agentId}/download/${version}` : `/agents/${agentId}/download`;
+  const url = apiUrl(path) + (params.toString() ? `?${params}` : '');
+
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  try {
+    const res = await fetch(url, { headers, redirect: 'manual' });
+    if (res.status === 301 || res.status === 302) {
+      const location = res.headers.get('Location');
+      if (location) {
+        window.location.assign(location);
+        return;
+      }
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast(data.error || `Download failed (${res.status})`);
+      return;
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match?.[1] || (version ? `agent-v${version}.zip` : 'agent.zip');
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(objectUrl);
+  } catch (err) {
+    toast(err.message || 'Download failed');
+  }
 }
 
 window.copyCliCommand = async (id) => {
@@ -1133,12 +1177,11 @@ window.cancelEdit = () => {
 // ---- Download ----
 
 window.downloadAgent = (id) => {
-  const a = document.createElement('a');
-  a.href = buildAgentDownloadUrl(id);
-  a.download = '';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  triggerAgentDownload(id);
+};
+
+window.downloadAgentVersion = (agentId, version) => {
+  triggerAgentDownload(agentId, version);
 };
 
 // ---- Import ----

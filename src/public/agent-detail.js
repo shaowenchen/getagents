@@ -252,15 +252,6 @@ window.publishAgentVersion = async (agentId, version) => {
   }
 };
 
-window.downloadAgentVersion = (agentId, version) => {
-  const a = document.createElement('a');
-  a.href = versionDownloadUrl(agentId, version);
-  a.download = '';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-};
-
 window.toggleVersionRestoreScript = async (version) => {
   state.detailExpandedRestoreVersion = state.detailExpandedRestoreVersion === version ? null : version;
   await renderAgentDetail(state.detailAgentId);

@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { agentFilePath, agentFileExists, createDirectAgentDownload, getAgentFileStream, supportsDirectAgentDownload } from './fileStore.js';
+import { agentFilePath, agentFileExists, contentDispositionAttachment, createDirectAgentDownload, getAgentFileStream, supportsDirectAgentDownload } from './fileStore.js';
 import { authenticateApiKey, getSessionUserId } from '../middleware/adminAuth.js';
 import type { AgentConfig, AgentVersion } from '../shared/types.js';
 import * as db from '../db/store.js';
@@ -156,7 +156,7 @@ export async function sendPreparedAgentDownload(res: Response, prepared: Prepare
 
   const { download, stream } = prepared;
   res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="${download.filename}"`);
+  res.setHeader('Content-Disposition', contentDispositionAttachment(download.filename));
   res.setHeader('Content-Length', download.fileSize);
   stream.pipe(res);
 }

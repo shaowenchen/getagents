@@ -16,6 +16,16 @@ import { Readable } from 'stream';
 import { finished, pipeline } from 'stream/promises';
 import crypto from 'crypto';
 
+/** Safe Content-Disposition for downloads (avoids quoted filenames that S3 URL-encodes as %22). */
+export function contentDispositionAttachment(filename: string): string {
+  const safe = filename.replace(/[\r\n"\\]/g, '');
+  if (/^[-A-Za-z0-9_.]+$/.test(safe)) {
+    return `attachment; filename=${safe}`;
+  }
+  const encoded = encodeURIComponent(safe);
+  return `attachment; filename="${safe}"; filename*=UTF-8''${encoded}`;
+}
+
 const AGENTS_ROOT = join(homedir(), '.getagents', 'agents');
 const STORAGE_DRIVER = (process.env.STORAGE_DRIVER || 'local').toLowerCase();
 const AGFS_API_URL = (process.env.AGFS_API_URL || 'http://localhost:8080').replace(/\/+$/g, '');
@@ -395,7 +405,7 @@ async function createDirectAgentDownload(
   const command = new GetObjectCommand({
     Bucket: S3_BUCKET,
     Key: key,
-    ResponseContentDisposition: `attachment; filename="${filename.replace(/"/g, '\\"')}"`,
+    ResponseContentDisposition: contentDispositionAttachment(filename),
     ResponseContentType: 'application/zip',
   });
   const url = await getSignedUrl(s3, command, {

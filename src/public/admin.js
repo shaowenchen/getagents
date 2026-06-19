@@ -660,6 +660,34 @@ function buildAgentDownloadUrl(agentId, version) {
   return apiUrl(path) + (qs ? `?${qs}` : '');
 }
 
+function parseDownloadFilename(disposition, fallback) {
+  if (!disposition) return fallback;
+  const utf8 = disposition.match(/filename\*=(?:UTF-8''|utf-8'')([^;\n]+)/i);
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8[1].trim());
+    } catch {
+      // fall through
+    }
+  }
+  const quoted = disposition.match(/filename="([^"]*)"/i);
+  if (quoted?.[1]) return quoted[1];
+  const plain = disposition.match(/filename=([^;\n]+)/i);
+  if (plain?.[1]) {
+    let name = plain[1].trim();
+    if ((name.startsWith('"') && name.endsWith('"')) || (name.startsWith("'") && name.endsWith("'"))) {
+      name = name.slice(1, -1);
+    }
+    try {
+      name = decodeURIComponent(name);
+    } catch {
+      // keep raw value
+    }
+    return name.replace(/^%22|%22$/gi, '').replace(/^"|"$/g, '');
+  }
+  return fallback;
+}
+
 async function triggerAgentDownload(agentId, version) {
   const downloadKey = getDownloadApiKey();
   const token = getAdminToken();
@@ -687,8 +715,8 @@ async function triggerAgentDownload(agentId, version) {
     }
     const blob = await res.blob();
     const disposition = res.headers.get('Content-Disposition') || '';
-    const match = disposition.match(/filename="([^"]+)"/);
-    const filename = match?.[1] || (version ? `agent-v${version}.zip` : 'agent.zip');
+    const fallback = version ? `agent-v${version}.zip` : 'agent.zip';
+    const filename = parseDownloadFilename(disposition, fallback);
     const objectUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = objectUrl;

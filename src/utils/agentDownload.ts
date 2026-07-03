@@ -94,9 +94,15 @@ function storageDriverLabel(): string {
   return (process.env.STORAGE_DRIVER || 'local').toLowerCase();
 }
 
+export type PrepareAgentDownloadOptions = {
+  /** Stream through GetAgents instead of redirecting to object storage (for browser clients). */
+  preferRelay?: boolean;
+};
+
 export async function prepareAgentDownload(
   download: ResolvedAgentDownload,
   agentId: string,
+  options: PrepareAgentDownloadOptions = {},
 ): Promise<PreparedAgentDownload> {
   const storageVersion = download.publicVersion ?? download.version;
   const fallback = { agentId, version: storageVersion };
@@ -110,7 +116,9 @@ export async function prepareAgentDownload(
     };
   }
 
-  const direct = await createDirectAgentDownload(download.filePath, fallback, download.filename);
+  const direct = options.preferRelay
+    ? null
+    : await createDirectAgentDownload(download.filePath, fallback, download.filename);
   if (direct) {
     return {
       ok: true,
@@ -141,11 +149,18 @@ export async function prepareAgentDownload(
   };
 }
 
-export function buildAgentRelayDownloadUrl(baseUrl: string, agentId: string, version?: number): string {
+export function buildAgentRelayDownloadUrl(
+  baseUrl: string,
+  agentId: string,
+  version?: number,
+  query?: Record<string, string>,
+): string {
   const normalized = baseUrl.replace(/\/+$/g, '');
-  return version === undefined
+  const path = version === undefined
     ? `${normalized}/api/agents/${agentId}/download`
     : `${normalized}/api/agents/${agentId}/download/${version}`;
+  if (!query || !Object.keys(query).length) return path;
+  return `${path}?${new URLSearchParams(query)}`;
 }
 
 export async function sendPreparedAgentDownload(res: Response, prepared: PreparedAgentDownload): Promise<void> {

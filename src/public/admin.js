@@ -699,7 +699,10 @@ function buildAgentDownloadHeaders() {
 
 function saveBlobDownload(blob, disposition, fallback) {
   const filename = parseDownloadFilename(disposition, fallback);
-  const objectUrl = URL.createObjectURL(blob);
+  const zipBlob = blob.type === 'application/zip'
+    ? blob
+    : new Blob([blob], { type: 'application/zip' });
+  const objectUrl = URL.createObjectURL(zipBlob);
   const a = document.createElement('a');
   a.href = objectUrl;
   a.download = filename;
@@ -709,27 +712,9 @@ function saveBlobDownload(blob, disposition, fallback) {
   URL.revokeObjectURL(objectUrl);
 }
 
-function triggerExternalDownload(url) {
-  const iframe = document.createElement('iframe');
-  iframe.style.display = 'none';
-  iframe.src = url;
-  document.body.appendChild(iframe);
-  setTimeout(() => iframe.remove(), 120000);
-}
-
-async function fetchDownloadResponse(url) {
-  const res = await fetch(url, { headers: buildAgentDownloadHeaders(), redirect: 'manual' });
-  if (res.status === 301 || res.status === 302) {
-    const location = res.headers.get('Location');
-    if (!location) throw new Error('Download redirect missing location');
-    return fetch(location);
-  }
-  return res;
-}
-
 async function triggerAgentDownload(agentId, version) {
   const downloadKey = getDownloadApiKey();
-  const params = new URLSearchParams({ agentId });
+  const params = new URLSearchParams({ agentId, client: 'browser' });
   if (version) params.set('version', String(version));
   const fallback = version ? `agent-v${version}.zip` : 'agent.zip';
 
@@ -754,21 +739,7 @@ async function triggerAgentDownload(agentId, version) {
     }
 
     const filename = init.filename || fallback;
-    if (init.direct) {
-      try {
-        const directRes = await fetch(init.url);
-        if (directRes.ok) {
-          saveBlobDownload(await directRes.blob(), directRes.headers.get('Content-Disposition') || '', filename);
-          return;
-        }
-      } catch {
-        // S3 may block cross-origin fetch; fall back to iframe download.
-      }
-      triggerExternalDownload(init.url);
-      return;
-    }
-
-    const relayRes = await fetchDownloadResponse(init.url);
+    const relayRes = await fetch(init.url, { headers: buildAgentDownloadHeaders() });
     if (!relayRes.ok) {
       const data = await relayRes.json().catch(() => ({}));
       toast(data.error || `Download failed (${relayRes.status})`);

@@ -29,7 +29,8 @@ router.get('/download/init', asyncHandler(async (req, res) => {
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
   const { download } = auth;
-  const prepared = await prepareAgentDownload(download, agentId);
+  const preferRelay = req.query.client === 'browser';
+  const prepared = await prepareAgentDownload(download, agentId, { preferRelay });
   if (!prepared.ok) {
     return res.status(prepared.status).json({
       error: prepared.error,
@@ -40,7 +41,7 @@ router.get('/download/init', asyncHandler(async (req, res) => {
     });
   }
 
-  if (prepared.mode === 'redirect') {
+  if (!preferRelay && prepared.mode === 'redirect') {
     return res.json({
       direct: true,
       url: prepared.url,
@@ -54,10 +55,11 @@ router.get('/download/init', asyncHandler(async (req, res) => {
 
   const base = inferAccessUrl(req, normalizeRoutePrefix(process.env.URI_PREFIX || '/getagents'));
   const relayVersion = versionParam ? download.version : undefined;
+  const relayQuery = preferRelay ? { relay: '1' } : undefined;
   return res.json({
     direct: false,
     reason: prepared.mode === 'stream' ? 'Direct object storage URL unavailable' : 'Using GetAgents relay download',
-    url: buildAgentRelayDownloadUrl(base, agentId, relayVersion),
+    url: buildAgentRelayDownloadUrl(base, agentId, relayVersion, relayQuery),
     filename: download.filename,
     fileSize: download.fileSize,
     version: download.version,

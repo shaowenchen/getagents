@@ -35,7 +35,8 @@ async function sendAgentDownload(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const prepared = await prepareAgentDownload(auth.download, req.params.id);
+  const preferRelay = req.query.relay === '1';
+  const prepared = await prepareAgentDownload(auth.download, req.params.id, { preferRelay });
   await sendPreparedAgentDownload(res, prepared);
 }
 

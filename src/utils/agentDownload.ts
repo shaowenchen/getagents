@@ -25,7 +25,12 @@ export type PreparedAgentDownload =
   | { ok: false; status: number; error: string; download?: ResolvedAgentDownload };
 
 export function hasDownloadAuthKey(req: Request): boolean {
-  return Boolean(req.headers.authorization || req.headers['x-api-key'] || req.query.downloadKey);
+  const auth = req.headers.authorization;
+  const hasApiKeyHeader = typeof req.headers['x-api-key'] === 'string' && req.headers['x-api-key'].trim()
+    || Array.isArray(req.headers['x-api-key']) && req.headers['x-api-key'][0];
+  const hasApiKeyAuth = typeof auth === 'string' && auth.startsWith('ApiKey ');
+  const hasQueryKey = typeof req.query.downloadKey === 'string' && req.query.downloadKey.trim();
+  return Boolean(hasApiKeyHeader || hasApiKeyAuth || hasQueryKey);
 }
 
 export async function resolveAgentDownload(agentId: string, requestedVersion?: number): Promise<ResolvedAgentDownload | null> {

@@ -688,19 +688,22 @@ function parseDownloadFilename(disposition, fallback) {
   return fallback;
 }
 
-async function triggerAgentDownload(agentId, version) {
+function buildAgentDownloadHeaders() {
   const downloadKey = getDownloadApiKey();
   const token = getAdminToken();
-  const params = new URLSearchParams();
-  if (downloadKey) params.set('downloadKey', downloadKey);
-  const path = version ? `/agents/${agentId}/download/${version}` : `/agents/${agentId}/download`;
-  const url = apiUrl(path) + (params.toString() ? `?${params}` : '');
-
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
+  if (downloadKey) headers['X-API-Key'] = downloadKey;
+  return headers;
+}
+
+async function triggerAgentDownload(agentId, version) {
+  const downloadKey = getDownloadApiKey();
+  const path = version ? `/agents/${agentId}/download/${version}` : `/agents/${agentId}/download`;
+  const url = apiUrl(path);
 
   try {
-    const res = await fetch(url, { headers, redirect: 'manual' });
+    const res = await fetch(url, { headers: buildAgentDownloadHeaders(), redirect: 'manual' });
     if (res.status === 301 || res.status === 302) {
       const location = res.headers.get('Location');
       if (location) {
@@ -710,6 +713,12 @@ async function triggerAgentDownload(agentId, version) {
     }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        toast(downloadKey
+          ? (data.error || 'Download unauthorized. Sign out and sign in again to refresh your Download API Key.')
+          : (data.error || 'Download unauthorized. Sign in again to refresh your session and Download API Key.'));
+        return;
+      }
       toast(data.error || `Download failed (${res.status})`);
       return;
     }

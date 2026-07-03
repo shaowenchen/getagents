@@ -697,43 +697,84 @@ function buildAgentDownloadHeaders() {
   return headers;
 }
 
+function saveBlobDownload(blob, disposition, fallback) {
+  const filename = parseDownloadFilename(disposition, fallback);
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
+}
+
+function triggerExternalDownload(url) {
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  iframe.src = url;
+  document.body.appendChild(iframe);
+  setTimeout(() => iframe.remove(), 120000);
+}
+
+async function fetchDownloadResponse(url) {
+  const res = await fetch(url, { headers: buildAgentDownloadHeaders(), redirect: 'manual' });
+  if (res.status === 301 || res.status === 302) {
+    const location = res.headers.get('Location');
+    if (!location) throw new Error('Download redirect missing location');
+    return fetch(location);
+  }
+  return res;
+}
+
 async function triggerAgentDownload(agentId, version) {
   const downloadKey = getDownloadApiKey();
-  const path = version ? `/agents/${agentId}/download/${version}` : `/agents/${agentId}/download`;
-  const url = apiUrl(path);
+  const params = new URLSearchParams({ agentId });
+  if (version) params.set('version', String(version));
+  const fallback = version ? `agent-v${version}.zip` : 'agent.zip';
 
   try {
-    const res = await fetch(url, { headers: buildAgentDownloadHeaders(), redirect: 'manual' });
-    if (res.status === 301 || res.status === 302) {
-      const location = res.headers.get('Location');
-      if (location) {
-        window.location.assign(location);
-        return;
-      }
-    }
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 401) {
+    const initRes = await fetch(apiUrl(`/cli/download/init?${params}`), {
+      headers: { Accept: 'application/json', ...buildAgentDownloadHeaders() },
+    });
+    const init = await initRes.json().catch(() => ({}));
+    if (!initRes.ok) {
+      if (initRes.status === 401) {
         toast(downloadKey
-          ? (data.error || 'Download unauthorized. Sign out and sign in again to refresh your Download API Key.')
-          : (data.error || 'Download unauthorized. Sign in again to refresh your session and Download API Key.'));
+          ? (init.error || 'Download unauthorized. Sign out and sign in again to refresh your Download API Key.')
+          : (init.error || 'Download unauthorized. Sign in again to refresh your session and Download API Key.'));
         return;
       }
-      toast(data.error || `Download failed (${res.status})`);
+      toast(init.error || `Download failed (${initRes.status})`);
       return;
     }
-    const blob = await res.blob();
-    const disposition = res.headers.get('Content-Disposition') || '';
-    const fallback = version ? `agent-v${version}.zip` : 'agent.zip';
-    const filename = parseDownloadFilename(disposition, fallback);
-    const objectUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = objectUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(objectUrl);
+    if (init.error) {
+      toast(init.error);
+      return;
+    }
+
+    const filename = init.filename || fallback;
+    if (init.direct) {
+      try {
+        const directRes = await fetch(init.url);
+        if (directRes.ok) {
+          saveBlobDownload(await directRes.blob(), directRes.headers.get('Content-Disposition') || '', filename);
+          return;
+        }
+      } catch {
+        // S3 may block cross-origin fetch; fall back to iframe download.
+      }
+      triggerExternalDownload(init.url);
+      return;
+    }
+
+    const relayRes = await fetchDownloadResponse(init.url);
+    if (!relayRes.ok) {
+      const data = await relayRes.json().catch(() => ({}));
+      toast(data.error || `Download failed (${relayRes.status})`);
+      return;
+    }
+    saveBlobDownload(await relayRes.blob(), relayRes.headers.get('Content-Disposition') || '', filename);
   } catch (err) {
     toast(err.message || 'Download failed');
   }
